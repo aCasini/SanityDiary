@@ -70,8 +70,7 @@ try:
         df = pd.DataFrame(res.data)
         
         # Gestione date: convertiamo in formato datetime di pandas
-        df['created_at'] = pd.to_datetime(df['created_at'])
-        
+        df['created_at'] = pd.to_datetime(df['created_at'], format='ISO8601')
         # Creazione Grafico Multi-Linea
         fig = px.line(
             df, 
