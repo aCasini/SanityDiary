@@ -1,0 +1,10 @@
+# Ambiente virtuale
+venv/
+__pycache__/
+*.pyc
+
+# Segreti di Streamlit (IMPORTANTE!)
+.streamlit/secrets.toml
+
+# File di sistema Mac
+.DS_Store
