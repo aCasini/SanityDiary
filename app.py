@@ -21,9 +21,10 @@ def check_password():
         password = st.text_input("Inserisci la password:", type="password")
         submit = st.form_submit_button("Accedi")
         if submit:
+            # Assicurati di aver aggiunto APP_PASSWORD nei Secrets di Streamlit Cloud
             if password == st.secrets["APP_PASSWORD"]:
                 st.session_state.authenticated = True
-                st.experimental_rerun()
+                st.rerun()  # <--- FIX: Usiamo st.rerun() invece di experimental
             else:
                 st.error("Password errata 🚫")
     return False
@@ -49,21 +50,24 @@ with col_title:
 with col_logout:
     if st.button("Esci 🚪"):
         st.session_state.authenticated = False
-        st.experimental_rerun()
+        st.rerun() # <--- FIX: Usiamo st.rerun()
 
 if supabase:
     # Recupero dati
-    res = supabase.table("health_logs").select("*").order("created_at", desc=False).execute()
-    df = pd.DataFrame(res.data) if res.data else pd.DataFrame()
-    if not df.empty:
-        df['created_at'] = pd.to_datetime(df['created_at'], errors='coerce', utc=True)
+    try:
+        res = supabase.table("health_logs").select("*").order("created_at", desc=False).execute()
+        df = pd.DataFrame(res.data) if res.data else pd.DataFrame()
+        if not df.empty:
+            df['created_at'] = pd.to_datetime(df['created_at'], errors='coerce', utc=True)
+    except Exception as e:
+        st.error(f"Errore recupero dati: {e}")
+        df = pd.DataFrame()
 
     # --- SIDEBAR: NUOVA MISURAZIONE (CON GESTIONE NULL) ---
     with st.sidebar.form("medical_form", clear_on_submit=True):
         st.header("➕ Nuova Misurazione")
         st.write("Lascia a 0 i valori che non vuoi registrare.")
         
-        # Usiamo 0.0 o 0 come valore "vuoto"
         oxy = st.number_input("Ossigeno %", 0, 100, 0)
         bpm = st.number_input("BPM", 0, 200, 0)
         temp = st.number_input("Temperatura °C", 0.0, 45.0, 0.0, 0.1)
@@ -73,7 +77,6 @@ if supabase:
         notes = st.text_area("Note")
         
         if st.form_submit_button("Salva nel Diario"):
-            # FIX: Se il valore è 0, lo trasformiamo in None (NULL nel DB)
             data_to_insert = {
                 "oxygen": oxy if oxy > 0 else None,
                 "bpm": bpm if bpm > 0 else None,
@@ -87,9 +90,9 @@ if supabase:
             try:
                 supabase.table("health_logs").insert(data_to_insert).execute()
                 st.success("Dati salvati!")
-                st.experimental_rerun()
+                st.rerun() # <--- FIX: Usiamo st.rerun()
             except Exception as e:
-                st.error(f"Errore: {e}")
+                st.error(f"Errore salvataggio: {e}")
 
     # --- 5. GRAFICI ---
     if not df.empty:
@@ -99,7 +102,6 @@ if supabase:
         valid_cols = []
         for col in cols_plot:
             if col in df_chart.columns:
-                # Plotly ignorerà automaticamente i valori None (punti mancanti nel grafico)
                 df_chart[col] = pd.to_numeric(df_chart[col], errors='coerce')
                 if not df_chart[col].dropna().empty:
                     valid_cols.append(col)
@@ -117,15 +119,18 @@ if supabase:
         uploaded_file = st.file_uploader("Seleziona PDF", type="pdf")
         if st.button("Salva Referto"):
             if uploaded_file:
-                bytes_data = uploaded_file.read()
-                base64_encoded = base64.b64encode(bytes_data).decode('utf-8')
-                supabase.table("referti_medici").insert({
-                    "nome_referto": uploaded_file.name,
-                    "data_esame": str(data_doc),
-                    "file_path": base64_encoded
-                }).execute()
-                st.success("Referto salvato!")
-                st.experimental_rerun()
+                try:
+                    bytes_data = uploaded_file.read()
+                    base64_encoded = base64.b64encode(bytes_data).decode('utf-8')
+                    supabase.table("referti_medici").insert({
+                        "nome_referto": uploaded_file.name,
+                        "data_esame": str(data_doc),
+                        "file_path": base64_encoded
+                    }).execute()
+                    st.success("Referto salvato!")
+                    st.rerun() # <--- FIX: Usiamo st.rerun()
+                except Exception as e:
+                    st.error(f"Errore caricamento PDF: {e}")
 
     # Lista Referti
     try:
@@ -145,5 +150,4 @@ if supabase:
         st.subheader("📋 Registro Storico")
         df_display = df.copy()
         df_display['created_at'] = df_display['created_at'].dt.strftime('%d/%m/%Y %H:%M')
-        # La tabella mostrerà 'None' o vuoto per i valori NULL
         st.dataframe(df_display.sort_values(by='created_at', ascending=False), use_container_width=True, hide_index=True)
