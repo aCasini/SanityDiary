@@ -55,27 +55,27 @@ if supabase:
 
     st.title("🩺 Sanity Diary Intelligence")
 
-    # --- 4. DASHBOARD KPI (Sempre visibile in alto) ---
+    # --- 4. DASHBOARD KPI ---
     if not df.empty:
         m1, m2, m3, m4 = st.columns(4)
         def get_delta(col):
-            if len(df) > 1 and pd.notnull(df[col].iloc[-1]) and pd.notnull(df[col].iloc[-2]):
+            if len(df) > 1 and col in df.columns and pd.notnull(df[col].iloc[-1]) and pd.notnull(df[col].iloc[-2]):
                 return f"{df[col].iloc[-1] - df[col].iloc[-2]:.1f}"
             return None
 
-        m1.metric("Ossigeno", f"{df['oxygen'].iloc[-1]:.0f}%", get_delta('oxygen'))
-        m2.metric("BPM", f"{df['bpm'].iloc[-1]:.0f}", get_delta('bpm'), delta_color="inverse")
-        m3.metric("Press. Max", f"{df['systolic'].iloc[-1]:.0f}", get_delta('systolic'), delta_color="inverse")
-        m4.metric("Peso", f"{df['weight'].iloc[-1]:.1f}kg", get_delta('weight'), delta_color="inverse")
+        m1.metric("Ossigeno", f"{df['oxygen'].iloc[-1]:.0f}%" if 'oxygen' in df.columns else "N/A", get_delta('oxygen'))
+        m2.metric("BPM", f"{df['bpm'].iloc[-1]:.0f}" if 'bpm' in df.columns else "N/A", get_delta('bpm'), delta_color="inverse")
+        m3.metric("Press. Max", f"{df['systolic'].iloc[-1]:.0f}" if 'systolic' in df.columns else "N/A", get_delta('systolic'), delta_color="inverse")
+        m4.metric("Peso", f"{df['weight'].iloc[-1]:.1f}kg" if 'weight' in df.columns else "N/A", get_delta('weight'), delta_color="inverse")
 
         _, alerts = analyze_trends(df)
         for a in alerts: st.info(a)
 
-        # --- 5. AREA ANALISI ORGANIZZATA IN TAB ---
+        # --- 5. AREA ANALISI IN TAB ---
         st.divider()
         tab_grafici, tab_correlazione, tab_archivio, tab_registro = st.tabs([
             "📈 Andamento Temporale", 
-            "🧬 Analisi Correlazioni (Pearson)", 
+            "🧬 Analisi Correlazioni", 
             "📂 Archivio Referti", 
             "📋 Registro Storico"
         ])
@@ -88,49 +88,34 @@ if supabase:
             st.plotly_chart(fig, use_container_width=True)
 
         with tab_correlazione:
-            st.subheader("🧬 Studio delle Relazioni tra i Parametri")
-            
+            st.subheader("🧬 Studio delle Relazioni (Pearson)")
             c_info, c_map = st.columns([1, 2])
-            
             with c_info:
                 st.markdown("""
-                ### Cos'è la Correlazione di Pearson?
-                Il coefficiente di **Pearson (r)** misura quanto due parametri sono legati tra loro.
-                
-                * **+1.0 (Blu):** Correlazione perfetta. Se uno sale, l'altro sale (es. Temperatura e BPM).
-                * **0.0 (Bianco):** Nessuna relazione tra i dati.
-                * **-1.0 (Rosso):** Correlazione inversa. Se uno sale, l'altro scende.
-                
-                *Nota: La correlazione non implica necessariamente causalità, ma aiuta a identificare schemi ricorrenti nella tua salute.*
+                **Cos'è il coefficiente r di Pearson?**
+                Misura quanto due parametri cambiano insieme.
+                - **+1 (Blu):** Crescono insieme.
+                - **-1 (Rosso):** Uno sale, l'altro scende.
                 """)
-                
-                # Calcolo Correlazione
                 if len(valid_cols) > 1:
                     corr_df = df[valid_cols].corr(method='pearson')
                     strong_corr = corr_df.unstack().sort_values(ascending=False)
                     strongest = strong_corr[strong_corr < 0.99].head(1)
                     if not strongest.empty:
                         v1, v2 = strongest.index[0]
-                        st.success(f"💡 **Insight:** Abbiamo trovato un legame significativo tra **{v1}** e **{v2}** ({strongest.values[0]:.2f}).")
-                else:
-                    st.warning("Inserisci più parametri diversi per vedere le correlazioni.")
-
+                        st.success(f"💡 **Insight:** Trovato legame tra **{v1}** e **{v2}** ({strongest.values[0]:.2f}).")
             with c_map:
                 if len(valid_cols) > 1:
-                    fig_corr = px.imshow(corr_df, 
-                                        text_auto=".2f", 
-                                        color_continuous_scale='RdBu_r', 
-                                        range_color=[-1, 1])
+                    fig_corr = px.imshow(corr_df, text_auto=".2f", color_continuous_scale='RdBu_r', range_color=[-1, 1])
                     st.plotly_chart(fig_corr, use_container_width=True)
 
         with tab_archivio:
             st.subheader("Gestione Documenti PDF")
             up = st.file_uploader("Carica nuovo referto", type="pdf")
-            if st.button("Salva nel Database") and up:
+            if st.button("Salva PDF") and up:
                 b64 = base64.b64encode(up.read()).decode('utf-8')
                 supabase.table("referti_medici").insert({"nome_referto":up.name, "data_esame":str(datetime.now().date()), "file_path":b64}).execute()
                 st.rerun()
-            
             res_r = supabase.table("referti_medici").select("*").order("data_esame", desc=True).execute()
             for r in (res_r.data or []):
                 col_n, col_d = st.columns([4, 1])
@@ -139,12 +124,18 @@ if supabase:
 
         with tab_registro:
             st.subheader("Storico Misurazioni")
-            df_disp = df.copy()
-            df_disp['Data'] = df_disp['created_at'].dt.strftime('%d/%m/%Y %H:%M')
-            cols_order = ["Data", "oxygen", "bpm", "temperature", "weight", "systolic", "diastolic", "notes"]
-            st.dataframe(df_disp[[c for c in cols_order if c in df_disp.columns]].sort_values(by='created_at', ascending=False), use_container_width=True, hide_index=True)
+            # --- FIX ERRORE KEYERROR ---
+            # 1. Ordiniamo prima il DF originale per data decrescente
+            df_sorted = df.sort_values(by='created_at', ascending=False).copy()
+            # 2. Creiamo la colonna formattata per la visualizzazione
+            df_sorted['Data Ora'] = df_sorted['created_at'].dt.strftime('%d/%m/%Y %H:%M')
+            # 3. Definiamo le colonne da mostrare
+            cols_to_show = ["Data Ora", "oxygen", "bpm", "temperature", "weight", "systolic", "diastolic", "notes"]
+            # 4. Filtriamo solo quelle esistenti e mostriamo
+            df_final = df_sorted[[c for c in cols_to_show if c in df_sorted.columns]]
+            st.dataframe(df_final, use_container_width=True, hide_index=True)
 
-    # --- 6. SIDEBAR (Sempre presente per inserimento rapido) ---
+    # --- 6. SIDEBAR ---
     with st.sidebar:
         st.header("⚙️ Nuovi Dati")
         with st.expander("➕ Inserisci Misura", expanded=True):
