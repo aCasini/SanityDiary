@@ -36,18 +36,14 @@ supabase = init_db()
 
 # --- 4. FUNZIONI DI ANALISI AVANZATA ---
 def get_ai_insights(df):
-    """Genera alert basati su trend storici e analisi statistica."""
     if df.empty: return [], ""
-    
-    # 1. Alert basati su soglie (scansione ultimi 10 dati)
     recent = df.sort_values(by='created_at', ascending=True).tail(10)
     alerts = []
     if (recent['systolic'] > 140).any():
-        alerts.append(f"Rilevati picchi di pressione sistolica (>140) negli ultimi 10 record.")
+        alerts.append(f"Rilevati picchi di pressione sistolica (>140) negli ultimi dati.")
     if (recent['oxygen'] < 94).any():
-        alerts.append(f"Rilevati cali di ossigenazione sotto il 94% negli ultimi dati.")
+        alerts.append(f"Rilevati cali di ossigenazione sotto il 94%.")
     
-    # 2. Analisi Pearson (IA Statistica)
     cols = ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight']
     valid_cols = [c for c in cols if c in df.columns and not df[c].dropna().empty]
     correlation_str = ""
@@ -57,44 +53,34 @@ def get_ai_insights(df):
         top = strong[strong < 0.98].head(1)
         if not top.empty:
             v1, v2 = top.index[0]
-            correlation_str = f"L'analisi IA ha rilevato una correlazione di {top.values[0]:.2f} tra {v1} e {v2}."
+            correlation_str = f"L'analisi IA indica una correlazione di {top.values[0]:.2f} tra {v1} e {v2}."
             
     return alerts, correlation_str
 
 def export_pdf(df):
     pdf = FPDF()
     pdf.add_page()
-    
-    # Intestazione
     pdf.set_font("Arial", "B", 18)
     pdf.cell(0, 10, "Sanity Diary - Report Clinico Intelligente", ln=True, align="C")
     pdf.set_font("Arial", "", 10)
     pdf.cell(0, 10, f"Generato il: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True, align="C")
     pdf.ln(5)
 
-    # --- SEZIONE AI & STATISTICA ---
+    # SEZIONE AI
     pdf.set_fill_color(230, 242, 255)
     pdf.set_font("Arial", "B", 14)
     pdf.cell(0, 10, " Analisi Intelligente dei Dati", ln=True, fill=True)
     pdf.set_font("Arial", "", 11)
-    
     alerts, corr_text = get_ai_insights(df)
-    
     if alerts:
-        pdf.set_font("Arial", "B", 11)
-        pdf.cell(0, 8, "Alert Clinici Rilevati:", ln=True)
-        pdf.set_font("Arial", "", 11)
-        for a in alerts:
-            pdf.multi_cell(0, 8, f"  - {a}")
-    else:
-        pdf.cell(0, 8, "  - Nessuna anomalia critica nei trend recenti.", ln=True)
-        
+        for a in alerts: pdf.multi_cell(0, 8, f"  - {a}")
+    else: pdf.cell(0, 8, "  - Nessuna anomalia critica rilevata.", ln=True)
     if corr_text:
         pdf.ln(2)
         pdf.set_font("Arial", "I", 11)
         pdf.multi_cell(0, 8, f"Insight IA: {corr_text}")
 
-    # --- RIEPILOGO MEDIE ---
+    # MEDIE
     pdf.ln(5)
     pdf.set_font("Arial", "B", 14)
     pdf.cell(0, 10, "Medie Storiche", ln=True)
@@ -103,7 +89,7 @@ def export_pdf(df):
         if col in df.columns and pd.notnull(df[col].mean()):
             pdf.cell(0, 8, f"- {col.capitalize()}: {df[col].mean():.2f}", ln=True)
 
-    # --- TABELLA REGISTRO ---
+    # TABELLA
     pdf.ln(10)
     pdf.set_font("Arial", "B", 11)
     pdf.set_fill_color(240, 240, 240)
@@ -113,7 +99,6 @@ def export_pdf(df):
     pdf.cell(40, 10, "Press (S/D)", 1, 0, "C", True)
     pdf.cell(30, 10, "Peso", 1, 0, "C", True)
     pdf.ln()
-    
     pdf.set_font("Arial", "", 10)
     for _, row in df.sort_values(by='created_at', ascending=False).head(30).iterrows():
         pdf.cell(40, 8, row['created_at'].strftime('%d/%m/%y %H:%M'), 1)
@@ -123,7 +108,6 @@ def export_pdf(df):
         pdf.cell(40, 8, p_s, 1, 0, "C")
         pdf.cell(30, 8, f"{row['weight']:.1f}" if pd.notnull(row['weight']) else "-", 1, 0, "C")
         pdf.ln()
-
     return bytes(pdf.output())
 
 # --- 5. LOGICA APP ---
@@ -138,12 +122,22 @@ if supabase:
     st.title("🩺 Sanity Diary Intelligence")
 
     if not df.empty:
-        # Metriche Dashboard
+        # --- DASHBOARD METRICHE CON ICONE TREND ---
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Ossigeno", f"{df['oxygen'].iloc[-1]:.0f}%")
-        m2.metric("BPM", f"{df['bpm'].iloc[-1]:.0f}")
-        m3.metric("Press. Max", f"{df['systolic'].iloc[-1]:.0f}")
-        m4.metric("Peso", f"{df['weight'].iloc[-1]:.1f}kg")
+        
+        def calc_delta(col):
+            if len(df) >= 2:
+                last = df[col].iloc[-1]
+                prev = df[col].iloc[-2]
+                if pd.notnull(last) and pd.notnull(prev):
+                    return round(float(last - prev), 2)
+            return None
+
+        # Configurazione metriche (inverse=True significa che SE SALE è ROSSO, es. pressione)
+        m1.metric("Ossigeno", f"{df['oxygen'].iloc[-1]:.0f}%", calc_delta('oxygen'))
+        m2.metric("BPM", f"{df['bpm'].iloc[-1]:.0f}", calc_delta('bpm'), delta_color="inverse")
+        m3.metric("Press. Max", f"{df['systolic'].iloc[-1]:.0f}", calc_delta('systolic'), delta_color="inverse")
+        m4.metric("Peso", f"{df['weight'].iloc[-1]:.1f}kg", calc_delta('weight'), delta_color="normal")
 
         st.divider()
         t_graph, t_pearson, t_ref, t_reg = st.tabs(["📈 Trend & Medie", "🧬 Pearson IA", "📂 Referti", "📋 Registro & Report"])
