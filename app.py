@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client
 import plotly.express as px
-import plotly.graph_objects as go
 from datetime import datetime
 import base64
 
@@ -38,10 +37,10 @@ supabase = init_db()
 def analyze_trends(df):
     if len(df) < 2: return None, []
     insights = []
-    last, prev = df.iloc[-1], df.iloc[-2]
-    if last['systolic'] and last['systolic'] > 140:
+    last = df.iloc[-1]
+    if last.get('systolic') and last['systolic'] > 140:
         insights.append("⚠️ **Pressione Sistolica Alta**: Valore sopra 140 mmHg.")
-    if last['oxygen'] and last['oxygen'] < 94:
+    if last.get('oxygen') and last['oxygen'] < 94:
         insights.append("🚩 **Ossigeno Critico**: Rilevato valore sotto il 94%.")
     return last, insights
 
@@ -56,63 +55,99 @@ if supabase:
 
     st.title("🩺 Sanity Diary Intelligence")
 
-    # --- DASHBOARD INTELLIGENTE ---
+    # --- 4. DASHBOARD KPI (Sempre visibile in alto) ---
     if not df.empty:
-        # Metriche in alto
         m1, m2, m3, m4 = st.columns(4)
         def get_delta(col):
             if len(df) > 1 and pd.notnull(df[col].iloc[-1]) and pd.notnull(df[col].iloc[-2]):
                 return f"{df[col].iloc[-1] - df[col].iloc[-2]:.1f}"
             return None
 
-        m1.metric("Ossigeno", f"{df['oxygen'].iloc[-1] if pd.notnull(df['oxygen'].iloc[-1]) else 0:.0f}%", get_delta('oxygen'))
-        m2.metric("BPM", f"{df['bpm'].iloc[-1] if pd.notnull(df['bpm'].iloc[-1]) else 0:.0f}", get_delta('bpm'), delta_color="inverse")
-        m3.metric("Press. Max", f"{df['systolic'].iloc[-1] if pd.notnull(df['systolic'].iloc[-1]) else 0:.0f}", get_delta('systolic'), delta_color="inverse")
-        m4.metric("Peso", f"{df['weight'].iloc[-1] if pd.notnull(df['weight'].iloc[-1]) else 0:.1f}kg", get_delta('weight'), delta_color="inverse")
+        m1.metric("Ossigeno", f"{df['oxygen'].iloc[-1]:.0f}%", get_delta('oxygen'))
+        m2.metric("BPM", f"{df['bpm'].iloc[-1]:.0f}", get_delta('bpm'), delta_color="inverse")
+        m3.metric("Press. Max", f"{df['systolic'].iloc[-1]:.0f}", get_delta('systolic'), delta_color="inverse")
+        m4.metric("Peso", f"{df['weight'].iloc[-1]:.1f}kg", get_delta('weight'), delta_color="inverse")
 
-        # Insights testuali
         _, alerts = analyze_trends(df)
         for a in alerts: st.info(a)
 
-        # --- SEZIONE CORRELAZIONE DI PEARSON ---
+        # --- 5. AREA ANALISI ORGANIZZATA IN TAB ---
         st.divider()
-        col_graph, col_corr = st.columns([2, 1])
+        tab_grafici, tab_correlazione, tab_archivio, tab_registro = st.tabs([
+            "📈 Andamento Temporale", 
+            "🧬 Analisi Correlazioni (Pearson)", 
+            "📂 Archivio Referti", 
+            "📋 Registro Storico"
+        ])
 
-        with col_graph:
-            st.subheader("📈 Grafico Temporale")
+        with tab_grafici:
+            st.subheader("Visualizzazione Trend")
             cols_plot = ['oxygen', 'bpm', 'temperature', 'systolic', 'diastolic', 'weight']
             valid_cols = [c for c in cols_plot if c in df.columns and not df[c].dropna().empty]
-            fig = px.line(df, x='created_at', y=valid_cols, markers=True)
+            fig = px.line(df, x='created_at', y=valid_cols, markers=True, template="plotly_white")
             st.plotly_chart(fig, use_container_width=True)
 
-        with col_corr:
-            st.subheader("🧬 Analisi Correlazioni")
-            # Calcolo correlazione di Pearson
-            corr_df = df[valid_cols].corr(method='pearson')
+        with tab_correlazione:
+            st.subheader("🧬 Studio delle Relazioni tra i Parametri")
             
-            # Heatmap con Plotly
-            fig_corr = px.imshow(corr_df, 
-                                text_auto=".2f", 
-                                aspect="auto",
-                                color_continuous_scale='RdBu_r', 
-                                range_color=[-1, 1],
-                                labels=dict(color="Pearson r"))
-            fig_corr.update_layout(margin=dict(l=20, r=20, t=20, b=20))
-            st.plotly_chart(fig_corr, use_container_width=True)
+            c_info, c_map = st.columns([1, 2])
             
-            # Messaggio interpretativo
-            if len(valid_cols) > 1:
-                strong_corr = corr_df.unstack().sort_values(ascending=False)
-                # Filtriamo i duplicati (r=1.0) e prendiamo la più alta
-                strongest = strong_corr[strong_corr < 0.99].head(1)
-                if not strongest.empty:
-                    v1, v2 = strongest.index[0]
-                    st.write(f"💡 **Nota:** C'è un legame tra **{v1}** e **{v2}** ($r={strongest.values[0]:.2f}$).")
+            with c_info:
+                st.markdown("""
+                ### Cos'è la Correlazione di Pearson?
+                Il coefficiente di **Pearson (r)** misura quanto due parametri sono legati tra loro.
+                
+                * **+1.0 (Blu):** Correlazione perfetta. Se uno sale, l'altro sale (es. Temperatura e BPM).
+                * **0.0 (Bianco):** Nessuna relazione tra i dati.
+                * **-1.0 (Rosso):** Correlazione inversa. Se uno sale, l'altro scende.
+                
+                *Nota: La correlazione non implica necessariamente causalità, ma aiuta a identificare schemi ricorrenti nella tua salute.*
+                """)
+                
+                # Calcolo Correlazione
+                if len(valid_cols) > 1:
+                    corr_df = df[valid_cols].corr(method='pearson')
+                    strong_corr = corr_df.unstack().sort_values(ascending=False)
+                    strongest = strong_corr[strong_corr < 0.99].head(1)
+                    if not strongest.empty:
+                        v1, v2 = strongest.index[0]
+                        st.success(f"💡 **Insight:** Abbiamo trovato un legame significativo tra **{v1}** e **{v2}** ({strongest.values[0]:.2f}).")
+                else:
+                    st.warning("Inserisci più parametri diversi per vedere le correlazioni.")
 
-    # --- SIDEBAR & ALTRI ---
+            with c_map:
+                if len(valid_cols) > 1:
+                    fig_corr = px.imshow(corr_df, 
+                                        text_auto=".2f", 
+                                        color_continuous_scale='RdBu_r', 
+                                        range_color=[-1, 1])
+                    st.plotly_chart(fig_corr, use_container_width=True)
+
+        with tab_archivio:
+            st.subheader("Gestione Documenti PDF")
+            up = st.file_uploader("Carica nuovo referto", type="pdf")
+            if st.button("Salva nel Database") and up:
+                b64 = base64.b64encode(up.read()).decode('utf-8')
+                supabase.table("referti_medici").insert({"nome_referto":up.name, "data_esame":str(datetime.now().date()), "file_path":b64}).execute()
+                st.rerun()
+            
+            res_r = supabase.table("referti_medici").select("*").order("data_esame", desc=True).execute()
+            for r in (res_r.data or []):
+                col_n, col_d = st.columns([4, 1])
+                col_n.write(f"📄 {r['nome_referto']} ({r['data_esame']})")
+                col_d.download_button("Download", base64.b64decode(r['file_path']), file_name=r['nome_referto'], key=f"d_{r['id']}")
+
+        with tab_registro:
+            st.subheader("Storico Misurazioni")
+            df_disp = df.copy()
+            df_disp['Data'] = df_disp['created_at'].dt.strftime('%d/%m/%Y %H:%M')
+            cols_order = ["Data", "oxygen", "bpm", "temperature", "weight", "systolic", "diastolic", "notes"]
+            st.dataframe(df_disp[[c for c in cols_order if c in df_disp.columns]].sort_values(by='created_at', ascending=False), use_container_width=True, hide_index=True)
+
+    # --- 6. SIDEBAR (Sempre presente per inserimento rapido) ---
     with st.sidebar:
-        st.header("⚙️ Inserimento")
-        with st.expander("➕ Misura"):
+        st.header("⚙️ Nuovi Dati")
+        with st.expander("➕ Inserisci Misura", expanded=True):
             with st.form("h_form", clear_on_submit=True):
                 o, b, t = st.number_input("O2%", 0, 100, 0), st.number_input("BPM", 0, 250, 0), st.number_input("Temp°C", 0.0, 45.0, 0.0, 0.1)
                 s, d, w = st.number_input("Sistolica", 0, 250, 0), st.number_input("Diastolica", 0, 150, 0), st.number_input("Peso kg", 0.0, 300.0, 0.0, 0.1)
@@ -123,33 +158,14 @@ if supabase:
                     supabase.table("health_logs").insert(data).execute()
                     st.rerun()
         
-        with st.expander("📅 Visita"):
+        with st.expander("📅 Nuova Visita"):
             with st.form("v_form", clear_on_submit=True):
                 nv, dv, lv = st.text_input("Visita"), st.date_input("Data"), st.text_input("Luogo")
-                if st.form_submit_button("Ok"):
+                if st.form_submit_button("Programma"):
                     if nv: supabase.table("visite_mediche").insert({"nome_visita":nv, "data_visita":str(dv), "luogo":lv}).execute()
                     st.rerun()
 
+        st.divider()
         if st.button("Logout 🚪", use_container_width=True):
             st.session_state.authenticated = False
             st.rerun()
-
-    # --- REFERTI E TABELLA (In fondo) ---
-    st.divider()
-    t1, t2 = st.tabs(["📂 Archivio Referti", "📋 Registro Storico"])
-    with t1:
-        up = st.file_uploader("Carica PDF", type="pdf")
-        if st.button("Archivia") and up:
-            b64 = base64.b64encode(up.read()).decode('utf-8')
-            supabase.table("referti_medici").insert({"nome_referto":up.name, "data_esame":str(datetime.now().date()), "file_path":b64}).execute()
-            st.rerun()
-        res_r = supabase.table("referti_medici").select("*").order("data_esame", desc=True).execute()
-        for r in (res_r.data or []):
-            st.download_button(f"📄 {r['nome_referto']}", base64.b64decode(r['file_path']), file_name=r['nome_referto'], key=f"d_{r['id']}")
-
-    with t2:
-        if not df.empty:
-            df_disp = df.copy()
-            df_disp['Data'] = df_disp['created_at'].dt.strftime('%d/%m %H:%M')
-            cols_order = ["Data", "oxygen", "bpm", "temperature", "weight", "systolic", "diastolic", "notes"]
-            st.dataframe(df_disp[[c for c in cols_order if c in df_disp.columns]].sort_values(by='Data', ascending=False), hide_index=True)
