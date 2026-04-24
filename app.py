@@ -48,50 +48,50 @@ def analyze_trends(df):
 def export_pdf(df):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", "B", 20)
-    pdf.cell(0, 10, "Sanity Diary - Report Medico", ln=True, align="C")
+    pdf.set_font("Arial", "B", 18)
+    pdf.cell(0, 10, "Sanity Diary - Report Salute", ln=True, align="C")
     pdf.set_font("Arial", "", 10)
-    pdf.cell(0, 10, f"Generato il: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True, align="C")
+    pdf.cell(0, 10, f"Documento generato il: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True, align="C")
     pdf.ln(10)
 
-    # Sintesi
+    # Statistiche Medie
     pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 10, "Sintesi ultimi parametri", ln=True)
+    pdf.cell(0, 10, "Riepilogo Medie Storiche", ln=True)
     pdf.set_font("Arial", "", 12)
-    cols = ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight']
-    for col in cols:
+    
+    cols_to_avg = ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight']
+    for col in cols_to_avg:
         if col in df.columns:
-            mean_val = df[col].mean()
-            pdf.cell(0, 8, f"- Media {col.capitalize()}: {mean_val:.2f}", ln=True)
+            val = df[col].mean()
+            if pd.notnull(val):
+                pdf.cell(0, 8, f"- {col.capitalize()}: {val:.2f}", ln=True)
     
-    pdf.ln(10)
+    pdf.ln(5)
     
-    # Tabella
+    # Tabella Ultime 20 misurazioni
     pdf.set_font("Arial", "B", 12)
-    pdf.cell(40, 10, "Data", 1)
-    pdf.cell(30, 10, "O2%", 1)
-    pdf.cell(30, 10, "BPM", 1)
-    pdf.cell(40, 10, "Press (S/D)", 1)
-    pdf.cell(30, 10, "Peso", 1)
+    pdf.set_fill_color(240, 240, 240)
+    pdf.cell(35, 10, "Data", 1, 0, "C", True)
+    pdf.cell(25, 10, "O2%", 1, 0, "C", True)
+    pdf.cell(25, 10, "BPM", 1, 0, "C", True)
+    pdf.cell(35, 10, "Press (S/D)", 1, 0, "C", True)
+    pdf.cell(30, 10, "Peso", 1, 0, "C", True)
     pdf.ln()
     
     pdf.set_font("Arial", "", 10)
-    df_pdf = df.sort_values(by='created_at', ascending=False).head(20)
-    for index, row in df_pdf.iterrows():
-        date_str = row['created_at'].strftime('%d/%m/%y')
-        o2 = str(row['oxygen']) if pd.notnull(row['oxygen']) else "-"
-        bpm = str(row['bpm']) if pd.notnull(row['bpm']) else "-"
-        press = f"{row['systolic']}/{row['diastolic']}" if pd.notnull(row['systolic']) else "-"
-        weight = str(row['weight']) if pd.notnull(row['weight']) else "-"
-        
-        pdf.cell(40, 8, date_str, 1)
-        pdf.cell(30, 8, o2, 1)
-        pdf.cell(30, 8, bpm, 1)
-        pdf.cell(40, 8, press, 1)
-        pdf.cell(30, 8, weight, 1)
+    df_recent = df.sort_values(by='created_at', ascending=False).head(20)
+    
+    for _, row in df_recent.iterrows():
+        pdf.cell(35, 8, row['created_at'].strftime('%d/%m/%y'), 1)
+        pdf.cell(25, 8, str(row['oxygen']) if pd.notnull(row['oxygen']) else "-", 1, 0, "C")
+        pdf.cell(25, 8, str(row['bpm']) if pd.notnull(row['bpm']) else "-", 1, 0, "C")
+        press_str = f"{int(row['systolic'])}/{int(row['diastolic'])}" if pd.notnull(row['systolic']) else "-"
+        pdf.cell(35, 8, press_str, 1, 0, "C")
+        pdf.cell(30, 8, f"{row['weight']:.1f}" if pd.notnull(row['weight']) else "-", 1, 0, "C")
         pdf.ln()
-        
-    return pdf.output(dest='S')
+
+    # Conversione output in BYTES per Streamlit
+    return bytes(pdf.output())
 
 if supabase:
     # --- RECUPERO DATI ---
@@ -168,20 +168,21 @@ if supabase:
 
         with tab_registro:
             st.subheader("Storico Misurazioni")
-            
-            # --- AGGIUNTA REPORT PDF ---
             c_table, c_report = st.columns([3, 1])
             with c_report:
                 st.write("🖨️ **Report Esportabile**")
-                pdf_data = export_pdf(df)
-                st.download_button(
-                    label="Genera Report PDF",
-                    data=pdf_data,
-                    file_name=f"report_salute_{datetime.now().strftime('%Y%m%d')}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
-                st.caption("Il report include le medie e le ultime 20 misurazioni.")
+                try:
+                    pdf_data = export_pdf(df)
+                    st.download_button(
+                        label="Genera Report PDF",
+                        data=pdf_data,
+                        file_name=f"report_salute_{datetime.now().strftime('%Y%m%d')}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
+                    st.caption("Il report include le medie e le ultime 20 misurazioni.")
+                except Exception as e:
+                    st.error(f"Errore creazione PDF: {e}")
 
             with c_table:
                 df_sorted = df.sort_values(by='created_at', ascending=False).copy()
@@ -193,7 +194,6 @@ if supabase:
     # --- 6. SIDEBAR ---
     with st.sidebar:
         st.header("⚙️ Nuovi Dati")
-        # ... (Modulo inserimento invariato)
         with st.expander("➕ Inserisci Misura", expanded=True):
             with st.form("h_form", clear_on_submit=True):
                 o, b, t = st.number_input("O2%", 0, 100, 0), st.number_input("BPM", 0, 250, 0), st.number_input("Temp°C", 0.0, 45.0, 0.0, 0.1)
