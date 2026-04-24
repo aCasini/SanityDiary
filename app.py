@@ -37,20 +37,21 @@ supabase = init_db()
 # --- 4. FUNZIONI DI ANALISI AVANZATA ---
 def get_ai_insights(df):
     if df.empty: return [], ""
-    # Scansione ultimi 10 record per alert
     recent = df.sort_values(by='created_at', ascending=True).tail(10)
     alerts = []
-    if (recent['systolic'] > 140).any():
+    if 'systolic' in recent.columns and (recent['systolic'] > 140).any():
         alerts.append("Rilevati episodi di pressione sistolica alta (>140) nei dati recenti.")
-    if (recent['oxygen'] < 94).any():
+    if 'oxygen' in recent.columns and (recent['oxygen'] < 94).any():
         alerts.append("Rilevati cali di ossigenazione sotto il 94% negli ultimi record.")
     
-    # Analisi Correlazione Pearson
-    cols = ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight']
-    valid_cols = [c for c in cols if c in df.columns and not df[c].dropna().empty]
+    # Matrice completa: includiamo tutti i parametri numerici disponibili
+    cols_stats = ['oxygen', 'bpm', 'temperature', 'systolic', 'diastolic', 'weight']
+    valid_cols = [c for c in cols_stats if c in df.columns and not df[c].dropna().empty]
+    
     correlation_str = ""
     if len(valid_cols) > 1:
         corr_matrix = df[valid_cols].corr()
+        # Estraiamo la correlazione più forte (escludendo l'autocorrelazione 1.0)
         strong = corr_matrix.unstack().sort_values(ascending=False)
         top = strong[strong < 0.98].head(1)
         if not top.empty:
@@ -76,7 +77,7 @@ def export_pdf(df):
     alerts, corr_text = get_ai_insights(df)
     if alerts:
         for a in alerts: pdf.multi_cell(0, 8, f"  - {a}")
-    else: pdf.cell(0, 8, "  - Nessuna anomalia critica rilevata nei trend recenti.", ln=True)
+    else: pdf.cell(0, 8, "  - Nessuna anomalia critica rilevata.", ln=True)
     if corr_text:
         pdf.ln(2)
         pdf.set_font("Arial", "I", 11)
@@ -87,28 +88,34 @@ def export_pdf(df):
     pdf.set_font("Arial", "B", 14)
     pdf.cell(0, 10, "Medie Storiche", ln=True)
     pdf.set_font("Arial", "", 12)
-    for col in ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight']:
+    for col in ['oxygen', 'bpm', 'temperature', 'systolic', 'diastolic', 'weight']:
         if col in df.columns and pd.notnull(df[col].mean()):
             pdf.cell(0, 8, f"- {col.capitalize()}: {df[col].mean():.2f}", ln=True)
 
     # TABELLA
     pdf.ln(10)
-    pdf.set_font("Arial", "B", 11)
+    pdf.set_font("Arial", "B", 10)
     pdf.set_fill_color(240, 240, 240)
-    pdf.cell(40, 10, "Data", 1, 0, "C", True)
-    pdf.cell(25, 10, "O2%", 1, 0, "C", True)
-    pdf.cell(25, 10, "BPM", 1, 0, "C", True)
-    pdf.cell(40, 10, "Press (S/D)", 1, 0, "C", True)
-    pdf.cell(30, 10, "Peso", 1, 0, "C", True)
+    pdf.cell(35, 10, "Data", 1, 0, "C", True)
+    pdf.cell(15, 10, "O2%", 1, 0, "C", True)
+    pdf.cell(15, 10, "BPM", 1, 0, "C", True)
+    pdf.cell(15, 10, "T C", 1, 0, "C", True)
+    pdf.cell(30, 10, "Press (S/D)", 1, 0, "C", True)
+    pdf.cell(20, 10, "Peso", 1, 0, "C", True)
+    pdf.cell(60, 10, "Note", 1, 0, "C", True)
     pdf.ln()
-    pdf.set_font("Arial", "", 10)
+    
+    pdf.set_font("Arial", "", 9)
     for _, row in df.sort_values(by='created_at', ascending=False).head(30).iterrows():
-        pdf.cell(40, 8, row['created_at'].strftime('%d/%m/%y %H:%M'), 1)
-        pdf.cell(25, 8, str(row['oxygen']) if pd.notnull(row['oxygen']) else "-", 1, 0, "C")
-        pdf.cell(25, 8, str(row['bpm']) if pd.notnull(row['bpm']) else "-", 1, 0, "C")
+        pdf.cell(35, 8, row['created_at'].strftime('%d/%m/%y %H:%M'), 1)
+        pdf.cell(15, 8, str(row['oxygen']) if pd.notnull(row['oxygen']) else "-", 1, 0, "C")
+        pdf.cell(15, 8, str(row['bpm']) if pd.notnull(row['bpm']) else "-", 1, 0, "C")
+        pdf.cell(15, 8, str(row['temperature']) if pd.notnull(row['temperature']) else "-", 1, 0, "C")
         p_s = f"{int(row['systolic'])}/{int(row['diastolic'])}" if pd.notnull(row['systolic']) else "-"
-        pdf.cell(40, 8, p_s, 1, 0, "C")
-        pdf.cell(30, 8, f"{row['weight']:.1f}" if pd.notnull(row['weight']) else "-", 1, 0, "C")
+        pdf.cell(30, 8, p_s, 1, 0, "C")
+        pdf.cell(20, 8, f"{row['weight']:.1f}" if pd.notnull(row['weight']) else "-", 1, 0, "C")
+        note = str(row['notes'])[:35] if pd.notnull(row['notes']) else "-"
+        pdf.cell(60, 8, note, 1)
         pdf.ln()
     return bytes(pdf.output())
 
@@ -124,7 +131,7 @@ if supabase:
     st.title("🩺 Sanity Diary Intelligence")
 
     if not df.empty:
-        # --- DASHBOARD METRICHE ---
+        # Metriche con delta
         m1, m2, m3, m4 = st.columns(4)
         def calc_delta(col):
             if len(df) >= 2:
@@ -142,12 +149,13 @@ if supabase:
 
         with t_graph:
             st.subheader("Riepilogo Medie Storiche")
-            c_m1, c_m2, c_m3, c_m4 = st.columns(4)
-            c_m1.write(f"**O2 Medio:** {df['oxygen'].mean():.1f}%")
-            c_m2.write(f"**BPM Medio:** {df['bpm'].mean():.0f}")
-            c_m3.write(f"**Sistolica Media:** {df['systolic'].mean():.0f}")
-            c_m4.write(f"**Peso Medio:** {df['weight'].mean():.1f} kg")
-            valid_cols = [c for c in ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight'] if c in df.columns]
+            c_m = st.columns(5)
+            params = [('oxygen', 'O2%'), ('bpm', 'BPM'), ('temperature', 'Temp'), ('systolic', 'Sist'), ('weight', 'Peso')]
+            for i, (col, label) in enumerate(params):
+                if col in df.columns:
+                    c_m[i].write(f"**{label} Medio:** {df[col].mean():.2f}")
+            
+            valid_cols = [c for c in ['oxygen', 'bpm', 'temperature', 'systolic', 'diastolic', 'weight'] if c in df.columns]
             st.plotly_chart(px.line(df, x='created_at', y=valid_cols, markers=True, template="plotly_white"), use_container_width=True)
 
         with t_pearson:
@@ -155,13 +163,13 @@ if supabase:
             c_info, c_map = st.columns([1, 2])
             alerts, corr_text = get_ai_insights(df)
             with c_info:
-                st.markdown("**Interpretazione IA:**")
+                st.markdown("**Analisi Multidimensionale:**")
                 if corr_text:
                     st.info(f"💡 {corr_text}")
-                    st.caption("Il coefficiente di Pearson indica quanto due valori variano insieme. Valori vicini a 1.0 mostrano un forte legame diretto.")
                 else:
-                    st.write("Dati insufficienti per il calcolo IA.")
+                    st.write("Dati insufficienti per l'analisi.")
                 
+                st.caption("La matrice a destra analizza tutti i parametri inseriti (inclusa temperatura e peso) per trovare legami nascosti.")
                 if alerts:
                     st.warning("⚠️ **Alert Recenti:**\n" + "\n".join([f"- {a}" for a in alerts]))
 
@@ -191,16 +199,19 @@ if supabase:
             with c_tab:
                 df_s = df.sort_values(by='created_at', ascending=False).copy()
                 df_s['Data Ora'] = df_s['created_at'].dt.strftime('%d/%m/%Y %H:%M')
-                st.dataframe(df_s[["Data Ora", "oxygen", "bpm", "weight", "systolic", "diastolic"]], use_container_width=True, hide_index=True)
+                disp_cols = ["Data Ora", "oxygen", "bpm", "temperature", "weight", "systolic", "diastolic", "notes"]
+                st.dataframe(df_s[[c for c in disp_cols if c in df_s.columns]], use_container_width=True, hide_index=True)
 
     with st.sidebar:
         st.header("⚙️ Gestione")
         with st.expander("➕ Nuova Misura", expanded=True):
             with st.form("h_form", clear_on_submit=True):
-                o, b, s, d, w = st.number_input("O2%", 0), st.number_input("BPM", 0), st.number_input("Sistolica", 0), st.number_input("Diastolica", 0), st.number_input("Peso kg", 0.0)
+                o, b, t = st.number_input("O2%", 0), st.number_input("BPM", 0), st.number_input("Temp °C", 0.0, format="%.1f")
+                s, d, w = st.number_input("Sistolica", 0), st.number_input("Diastolica", 0), st.number_input("Peso kg", 0.0, format="%.1f")
                 n = st.text_area("Note")
                 if st.form_submit_button("Salva"):
-                    data = {"oxygen":o if o>0 else None, "bpm":b if b>0 else None, "systolic":s if s>0 else None, "diastolic":d if d>0 else None, "weight":w if w>0 else None, "notes":n}
+                    data = {"oxygen":o if o>0 else None, "bpm":b if b>0 else None, "temperature":t if t>0 else None,
+                            "systolic":s if s>0 else None, "diastolic":d if d>0 else None, "weight":w if w>0 else None, "notes":n}
                     supabase.table("health_logs").insert(data).execute()
                     st.rerun()
         if st.button("Logout 🚪", use_container_width=True):
