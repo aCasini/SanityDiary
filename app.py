@@ -82,8 +82,8 @@ if supabase:
                 oxy = st.number_input("Ossigeno %", 0, 100, 0)
                 bpm = st.number_input("Battito (BPM)", 0, 250, 0)
                 temp = st.number_input("Temperatura °C", 0.0, 45.0, 0.0, 0.1)
-                sys = st.number_input("Sistolica", 0, 250, 0)
-                dia = st.number_input("Diastolica", 0, 150, 0)
+                sys = st.number_input("Pressione Max (Sistolica)", 0, 250, 0)
+                dia = st.number_input("Pressione Min (Diastolica)", 0, 150, 0)
                 weight = st.number_input("Peso (kg)", 0.0, 300.0, 0.0, 0.1)
                 notes = st.text_area("Note")
                 
@@ -150,10 +150,38 @@ if supabase:
                 c2.download_button("Scarica ⬇️", pdf_bytes, file_name=ref['nome_referto'], key=f"dl_{ref['id']}")
     except: pass
 
-    # --- 9. TABELLA STORICA ---
+    # --- 9. TABELLA STORICA (ORDINATA E FILTRATA) ---
     if not df.empty:
         st.divider()
         st.subheader("📋 Registro Storico")
+        
+        # Prepariamo il DataFrame per la visualizzazione
         df_display = df.copy()
-        df_display['created_at'] = df_display['created_at'].dt.strftime('%d/%m/%Y %H:%M')
-        st.dataframe(df_display.sort_values(by='created_at', ascending=False), use_container_width=True, hide_index=True)
+        
+        # 1. Formattiamo la data
+        df_display['Data Ora'] = df_display['created_at'].dt.strftime('%d/%m/%Y %H:%M')
+        
+        # 2. Rinominiamo le colonne per una migliore leggibilità
+        column_mapping = {
+            "oxygen": "Oxygen",
+            "bpm": "BPM",
+            "temperature": "Temperatura",
+            "weight": "Peso",
+            "systolic": "Pressione Max",
+            "diastolic": "Pressione Min",
+            "notes": "Note"
+        }
+        df_display = df_display.rename(columns=column_mapping)
+        
+        # 3. Definiamo l'ordine richiesto (includendo la colonna Data Ora all'inizio)
+        cols_to_keep = ["Data Ora", "Oxygen", "BPM", "Temperatura", "Peso", "Pressione Max", "Pressione Min", "Note"]
+        
+        # Filtriamo solo le colonne che esistono effettivamente nel DF
+        cols_final = [c for c in cols_to_keep if c in df_display.columns]
+        
+        # Visualizziamo la tabella ordinata per data (descrescente) e senza ID
+        st.dataframe(
+            df_display[cols_final].sort_values(by='Data Ora', ascending=False), 
+            use_container_width=True, 
+            hide_index=True
+        )
