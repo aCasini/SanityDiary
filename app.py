@@ -21,10 +21,9 @@ def check_password():
         password = st.text_input("Inserisci la password:", type="password")
         submit = st.form_submit_button("Accedi")
         if submit:
-            # Assicurati di aver aggiunto APP_PASSWORD nei Secrets di Streamlit Cloud
             if password == st.secrets["APP_PASSWORD"]:
                 st.session_state.authenticated = True
-                st.rerun()  # <--- FIX: Usiamo st.rerun() invece di experimental
+                st.rerun()
             else:
                 st.error("Password errata 🚫")
     return False
@@ -50,24 +49,27 @@ with col_title:
 with col_logout:
     if st.button("Esci 🚪"):
         st.session_state.authenticated = False
-        st.rerun() # <--- FIX: Usiamo st.rerun()
+        st.rerun()
 
 if supabase:
-    # Recupero dati
+    # --- RECUPERO DATI VITALI ---
     try:
         res = supabase.table("health_logs").select("*").order("created_at", desc=False).execute()
         df = pd.DataFrame(res.data) if res.data else pd.DataFrame()
+        
         if not df.empty:
-            df['created_at'] = pd.to_datetime(df['created_at'], errors='coerce', utc=True)
+            # FIX DATA: Usiamo ISO8601 e forziamo UTC per evitare i NULL (NaT)
+            # Rimuoviamo eventuali spazi bianchi prima della conversione
+            df['created_at'] = pd.to_datetime(df['created_at'].astype(str).str.strip(), utc=True)
+            # Arrotondiamo al secondo per pulizia visiva
+            df['created_at'] = df['created_at'].dt.floor('S')
     except Exception as e:
         st.error(f"Errore recupero dati: {e}")
         df = pd.DataFrame()
 
-    # --- SIDEBAR: NUOVA MISURAZIONE (CON GESTIONE NULL) ---
+    # --- SIDEBAR: NUOVA MISURAZIONE ---
     with st.sidebar.form("medical_form", clear_on_submit=True):
         st.header("➕ Nuova Misurazione")
-        st.write("Lascia a 0 i valori che non vuoi registrare.")
-        
         oxy = st.number_input("Ossigeno %", 0, 100, 0)
         bpm = st.number_input("BPM", 0, 200, 0)
         temp = st.number_input("Temperatura °C", 0.0, 45.0, 0.0, 0.1)
@@ -86,13 +88,12 @@ if supabase:
                 "weight": weight if weight > 0 else None,
                 "notes": notes if notes.strip() != "" else None
             }
-            
             try:
                 supabase.table("health_logs").insert(data_to_insert).execute()
                 st.success("Dati salvati!")
-                st.rerun() # <--- FIX: Usiamo st.rerun()
+                st.rerun()
             except Exception as e:
-                st.error(f"Errore salvataggio: {e}")
+                st.error(f"Errore: {e}")
 
     # --- 5. GRAFICI ---
     if not df.empty:
@@ -119,18 +120,15 @@ if supabase:
         uploaded_file = st.file_uploader("Seleziona PDF", type="pdf")
         if st.button("Salva Referto"):
             if uploaded_file:
-                try:
-                    bytes_data = uploaded_file.read()
-                    base64_encoded = base64.b64encode(bytes_data).decode('utf-8')
-                    supabase.table("referti_medici").insert({
-                        "nome_referto": uploaded_file.name,
-                        "data_esame": str(data_doc),
-                        "file_path": base64_encoded
-                    }).execute()
-                    st.success("Referto salvato!")
-                    st.rerun() # <--- FIX: Usiamo st.rerun()
-                except Exception as e:
-                    st.error(f"Errore caricamento PDF: {e}")
+                bytes_data = uploaded_file.read()
+                base64_encoded = base64.b64encode(bytes_data).decode('utf-8')
+                supabase.table("referti_medici").insert({
+                    "nome_referto": uploaded_file.name,
+                    "data_esame": str(data_doc),
+                    "file_path": base64_encoded
+                }).execute()
+                st.success("Referto salvato!")
+                st.rerun()
 
     # Lista Referti
     try:
@@ -144,10 +142,17 @@ if supabase:
     except:
         pass
 
-    # --- 7. TABELLA STORICA ---
+    # --- 7. TABELLA STORICA (FIX NULL DATES) ---
     if not df.empty:
         st.divider()
         st.subheader("📋 Registro Storico")
         df_display = df.copy()
-        df_display['created_at'] = df_display['created_at'].dt.strftime('%d/%m/%Y %H:%M')
-        st.dataframe(df_display.sort_values(by='created_at', ascending=False), use_container_width=True, hide_index=True)
+        
+        # Formattazione sicura: se la data è nulla, mettiamo un avviso invece di NULL
+        df_display['created_at'] = df_display['created_at'].dt.strftime('%d/%m/%Y %H:%M:%S').fillna("Data non valida")
+        
+        st.dataframe(
+            df_display.sort_values(by='created_at', ascending=False), 
+            use_container_width=True, 
+            hide_index=True
+        )
