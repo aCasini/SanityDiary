@@ -4,6 +4,7 @@ from supabase import create_client
 import plotly.express as px
 from datetime import datetime
 import base64
+from fpdf import FPDF
 
 # --- 1. CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Sanity Diary Intelligence", page_icon="🩺", layout="wide")
@@ -33,7 +34,7 @@ def init_db():
 
 supabase = init_db()
 
-# --- FUNZIONI DI ANALISI ---
+# --- FUNZIONI DI ANALISI E PDF ---
 def analyze_trends(df):
     if len(df) < 2: return None, []
     insights = []
@@ -43,6 +44,54 @@ def analyze_trends(df):
     if last.get('oxygen') and last['oxygen'] < 94:
         insights.append("🚩 **Ossigeno Critico**: Rilevato valore sotto il 94%.")
     return last, insights
+
+def export_pdf(df):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 20)
+    pdf.cell(0, 10, "Sanity Diary - Report Medico", ln=True, align="C")
+    pdf.set_font("Arial", "", 10)
+    pdf.cell(0, 10, f"Generato il: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True, align="C")
+    pdf.ln(10)
+
+    # Sintesi
+    pdf.set_font("Arial", "B", 14)
+    pdf.cell(0, 10, "Sintesi ultimi parametri", ln=True)
+    pdf.set_font("Arial", "", 12)
+    cols = ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight']
+    for col in cols:
+        if col in df.columns:
+            mean_val = df[col].mean()
+            pdf.cell(0, 8, f"- Media {col.capitalize()}: {mean_val:.2f}", ln=True)
+    
+    pdf.ln(10)
+    
+    # Tabella
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(40, 10, "Data", 1)
+    pdf.cell(30, 10, "O2%", 1)
+    pdf.cell(30, 10, "BPM", 1)
+    pdf.cell(40, 10, "Press (S/D)", 1)
+    pdf.cell(30, 10, "Peso", 1)
+    pdf.ln()
+    
+    pdf.set_font("Arial", "", 10)
+    df_pdf = df.sort_values(by='created_at', ascending=False).head(20)
+    for index, row in df_pdf.iterrows():
+        date_str = row['created_at'].strftime('%d/%m/%y')
+        o2 = str(row['oxygen']) if pd.notnull(row['oxygen']) else "-"
+        bpm = str(row['bpm']) if pd.notnull(row['bpm']) else "-"
+        press = f"{row['systolic']}/{row['diastolic']}" if pd.notnull(row['systolic']) else "-"
+        weight = str(row['weight']) if pd.notnull(row['weight']) else "-"
+        
+        pdf.cell(40, 8, date_str, 1)
+        pdf.cell(30, 8, o2, 1)
+        pdf.cell(30, 8, bpm, 1)
+        pdf.cell(40, 8, press, 1)
+        pdf.cell(30, 8, weight, 1)
+        pdf.ln()
+        
+    return pdf.output(dest='S')
 
 if supabase:
     # --- RECUPERO DATI ---
@@ -77,7 +126,7 @@ if supabase:
             "📈 Andamento Temporale", 
             "🧬 Analisi Correlazioni", 
             "📂 Archivio Referti", 
-            "📋 Registro Storico"
+            "📋 Registro & Report"
         ])
 
         with tab_grafici:
@@ -91,12 +140,7 @@ if supabase:
             st.subheader("🧬 Studio delle Relazioni (Pearson)")
             c_info, c_map = st.columns([1, 2])
             with c_info:
-                st.markdown("""
-                **Cos'è il coefficiente r di Pearson?**
-                Misura quanto due parametri cambiano insieme.
-                - **+1 (Blu):** Crescono insieme.
-                - **-1 (Rosso):** Uno sale, l'altro scende.
-                """)
+                st.markdown("**Cos'è il coefficiente r di Pearson?** ...")
                 if len(valid_cols) > 1:
                     corr_df = df[valid_cols].corr(method='pearson')
                     strong_corr = corr_df.unstack().sort_values(ascending=False)
@@ -124,20 +168,32 @@ if supabase:
 
         with tab_registro:
             st.subheader("Storico Misurazioni")
-            # --- FIX ERRORE KEYERROR ---
-            # 1. Ordiniamo prima il DF originale per data decrescente
-            df_sorted = df.sort_values(by='created_at', ascending=False).copy()
-            # 2. Creiamo la colonna formattata per la visualizzazione
-            df_sorted['Data Ora'] = df_sorted['created_at'].dt.strftime('%d/%m/%Y %H:%M')
-            # 3. Definiamo le colonne da mostrare
-            cols_to_show = ["Data Ora", "oxygen", "bpm", "temperature", "weight", "systolic", "diastolic", "notes"]
-            # 4. Filtriamo solo quelle esistenti e mostriamo
-            df_final = df_sorted[[c for c in cols_to_show if c in df_sorted.columns]]
-            st.dataframe(df_final, use_container_width=True, hide_index=True)
+            
+            # --- AGGIUNTA REPORT PDF ---
+            c_table, c_report = st.columns([3, 1])
+            with c_report:
+                st.write("🖨️ **Report Esportabile**")
+                pdf_data = export_pdf(df)
+                st.download_button(
+                    label="Genera Report PDF",
+                    data=pdf_data,
+                    file_name=f"report_salute_{datetime.now().strftime('%Y%m%d')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+                st.caption("Il report include le medie e le ultime 20 misurazioni.")
+
+            with c_table:
+                df_sorted = df.sort_values(by='created_at', ascending=False).copy()
+                df_sorted['Data Ora'] = df_sorted['created_at'].dt.strftime('%d/%m/%Y %H:%M')
+                cols_to_show = ["Data Ora", "oxygen", "bpm", "temperature", "weight", "systolic", "diastolic", "notes"]
+                df_final = df_sorted[[c for c in cols_to_show if c in df_sorted.columns]]
+                st.dataframe(df_final, use_container_width=True, hide_index=True)
 
     # --- 6. SIDEBAR ---
     with st.sidebar:
         st.header("⚙️ Nuovi Dati")
+        # ... (Modulo inserimento invariato)
         with st.expander("➕ Inserisci Misura", expanded=True):
             with st.form("h_form", clear_on_submit=True):
                 o, b, t = st.number_input("O2%", 0, 100, 0), st.number_input("BPM", 0, 250, 0), st.number_input("Temp°C", 0.0, 45.0, 0.0, 0.1)
