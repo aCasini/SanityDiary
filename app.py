@@ -34,91 +34,99 @@ def init_db():
 
 supabase = init_db()
 
-# --- 4. FUNZIONI DI ANALISI E PDF ---
-def analyze_trends(df):
-    if len(df) < 1: return None, []
-    insights = []
-    last = df.iloc[-1]
-    if last.get('systolic') and last['systolic'] > 140:
-        insights.append("⚠️ **Pressione Sistolica Alta**: Valore sopra 140 mmHg.")
-    if last.get('oxygen') and last['oxygen'] < 94:
-        insights.append("🚩 **Ossigeno Critico**: Rilevato valore sotto il 94%.")
-    return last, insights
+# --- 4. FUNZIONI DI ANALISI AVANZATA ---
+def get_ai_insights(df):
+    """Genera alert basati su trend storici e analisi statistica."""
+    if df.empty: return [], ""
+    
+    # 1. Alert basati su soglie (scansione ultimi 10 dati)
+    recent = df.sort_values(by='created_at', ascending=True).tail(10)
+    alerts = []
+    if (recent['systolic'] > 140).any():
+        alerts.append(f"Rilevati picchi di pressione sistolica (>140) negli ultimi 10 record.")
+    if (recent['oxygen'] < 94).any():
+        alerts.append(f"Rilevati cali di ossigenazione sotto il 94% negli ultimi dati.")
+    
+    # 2. Analisi Pearson (IA Statistica)
+    cols = ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight']
+    valid_cols = [c for c in cols if c in df.columns and not df[c].dropna().empty]
+    correlation_str = ""
+    if len(valid_cols) > 1:
+        corr_matrix = df[valid_cols].corr()
+        strong = corr_matrix.unstack().sort_values(ascending=False)
+        top = strong[strong < 0.98].head(1)
+        if not top.empty:
+            v1, v2 = top.index[0]
+            correlation_str = f"L'analisi IA ha rilevato una correlazione di {top.values[0]:.2f} tra {v1} e {v2}."
+            
+    return alerts, correlation_str
 
 def export_pdf(df):
     pdf = FPDF()
     pdf.add_page()
     
-    # Intestazione Professionale
+    # Intestazione
     pdf.set_font("Arial", "B", 18)
     pdf.cell(0, 10, "Sanity Diary - Report Clinico Intelligente", ln=True, align="C")
     pdf.set_font("Arial", "", 10)
     pdf.cell(0, 10, f"Generato il: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True, align="C")
     pdf.ln(5)
 
-    # --- 1. ANALISI INTELLIGENTE & STATISTICA ---
+    # --- SEZIONE AI & STATISTICA ---
     pdf.set_fill_color(230, 242, 255)
     pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 10, " Analisi Intelligente e Statistica", ln=True, fill=True)
+    pdf.cell(0, 10, " Analisi Intelligente dei Dati", ln=True, fill=True)
     pdf.set_font("Arial", "", 11)
     
-    _, alerts = analyze_trends(df)
+    alerts, corr_text = get_ai_insights(df)
+    
     if alerts:
         pdf.set_font("Arial", "B", 11)
-        pdf.cell(0, 8, "Avvisi Rilevati:", ln=True)
+        pdf.cell(0, 8, "Alert Clinici Rilevati:", ln=True)
         pdf.set_font("Arial", "", 11)
         for a in alerts:
-            pdf.multi_cell(0, 8, f"  - {a.replace('⚠️','').replace('🚩','').replace('**','')}")
-    
-    cols_stats = ['oxygen', 'bpm', 'temperature', 'systolic', 'diastolic', 'weight']
-    valid_cols = [c for c in cols_stats if c in df.columns and not df[c].dropna().empty]
-    if len(valid_cols) > 1:
-        corr_matrix = df[valid_cols].corr(method='pearson')
-        unstacked = corr_matrix.unstack().sort_values(ascending=False)
-        top_corr = unstacked[unstacked < 0.98].head(1)
-        if not top_corr.empty:
-            v1, v2 = top_corr.index[0]
-            pdf.ln(2)
-            pdf.set_font("Arial", "B", 11)
-            pdf.cell(0, 8, "Analisi delle Correlazioni (Pearson):", ln=True)
-            pdf.set_font("Arial", "I", 11)
-            pdf.multi_cell(0, 8, f"Rilevato legame statistico di {top_corr.values[0]:.2f} tra {v1} e {v2}.")
+            pdf.multi_cell(0, 8, f"  - {a}")
+    else:
+        pdf.cell(0, 8, "  - Nessuna anomalia critica nei trend recenti.", ln=True)
+        
+    if corr_text:
+        pdf.ln(2)
+        pdf.set_font("Arial", "I", 11)
+        pdf.multi_cell(0, 8, f"Insight IA: {corr_text}")
 
-    # --- 2. RIEPILOGO MEDIE ---
+    # --- RIEPILOGO MEDIE ---
     pdf.ln(5)
     pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 10, "Medie Storiche Periodo", ln=True)
+    pdf.cell(0, 10, "Medie Storiche", ln=True)
     pdf.set_font("Arial", "", 12)
     for col in ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight']:
         if col in df.columns and pd.notnull(df[col].mean()):
             pdf.cell(0, 8, f"- {col.capitalize()}: {df[col].mean():.2f}", ln=True)
 
-    # --- 3. TABELLA DATI ---
+    # --- TABELLA REGISTRO ---
     pdf.ln(10)
     pdf.set_font("Arial", "B", 11)
     pdf.set_fill_color(240, 240, 240)
-    pdf.cell(35, 10, "Data", 1, 0, "C", True)
-    pdf.cell(20, 10, "O2%", 1, 0, "C", True)
-    pdf.cell(20, 10, "BPM", 1, 0, "C", True)
-    pdf.cell(35, 10, "Press (S/D)", 1, 0, "C", True)
-    pdf.cell(25, 10, "Peso", 1, 0, "C", True)
-    pdf.cell(55, 10, "Note", 1, 0, "C", True)
+    pdf.cell(40, 10, "Data", 1, 0, "C", True)
+    pdf.cell(25, 10, "O2%", 1, 0, "C", True)
+    pdf.cell(25, 10, "BPM", 1, 0, "C", True)
+    pdf.cell(40, 10, "Press (S/D)", 1, 0, "C", True)
+    pdf.cell(30, 10, "Peso", 1, 0, "C", True)
     pdf.ln()
     
-    pdf.set_font("Arial", "", 9)
+    pdf.set_font("Arial", "", 10)
     for _, row in df.sort_values(by='created_at', ascending=False).head(30).iterrows():
-        pdf.cell(35, 8, row['created_at'].strftime('%d/%m/%y %H:%M'), 1)
-        pdf.cell(20, 8, str(row['oxygen']) if pd.notnull(row['oxygen']) else "-", 1, 0, "C")
-        pdf.cell(20, 8, str(row['bpm']) if pd.notnull(row['bpm']) else "-", 1, 0, "C")
+        pdf.cell(40, 8, row['created_at'].strftime('%d/%m/%y %H:%M'), 1)
+        pdf.cell(25, 8, str(row['oxygen']) if pd.notnull(row['oxygen']) else "-", 1, 0, "C")
+        pdf.cell(25, 8, str(row['bpm']) if pd.notnull(row['bpm']) else "-", 1, 0, "C")
         p_s = f"{int(row['systolic'])}/{int(row['diastolic'])}" if pd.notnull(row['systolic']) else "-"
-        pdf.cell(35, 8, p_s, 1, 0, "C")
-        pdf.cell(25, 8, f"{row['weight']:.1f}" if pd.notnull(row['weight']) else "-", 1, 0, "C")
-        pdf.cell(55, 8, str(row['notes'])[:30] if pd.notnull(row['notes']) else "-", 1)
+        pdf.cell(40, 8, p_s, 1, 0, "C")
+        pdf.cell(30, 8, f"{row['weight']:.1f}" if pd.notnull(row['weight']) else "-", 1, 0, "C")
         pdf.ln()
 
     return bytes(pdf.output())
 
-# --- 5. LOGICA PRINCIPALE ---
+# --- 5. LOGICA APP ---
 if supabase:
     try:
         res = supabase.table("health_logs").select("*").order("created_at", desc=False).execute()
@@ -129,25 +137,13 @@ if supabase:
 
     st.title("🩺 Sanity Diary Intelligence")
 
-    # Banner Visite
-    try:
-        res_v = supabase.table("visite_mediche").select("*").eq("completata", False).order("data_visita").execute()
-        if res_v.data:
-            p = res_v.data[0]
-            st.warning(f"🔔 **Prossima Visita:** {p['nome_visita']} - {p['data_visita']} ({p['luogo']})")
-    except: pass
-
     if not df.empty:
         # Metriche Dashboard
         m1, m2, m3, m4 = st.columns(4)
-        def get_delta(col):
-            if len(df) > 1 and col in df.columns and pd.notnull(df[col].iloc[-1]) and pd.notnull(df[col].iloc[-2]):
-                return f"{df[col].iloc[-1] - df[col].iloc[-2]:.1f}"
-            return None
-        m1.metric("Ossigeno", f"{df['oxygen'].iloc[-1]:.0f}%", get_delta('oxygen'))
-        m2.metric("BPM", f"{df['bpm'].iloc[-1]:.0f}", get_delta('bpm'), delta_color="inverse")
-        m3.metric("Press. Max", f"{df['systolic'].iloc[-1]:.0f}", get_delta('systolic'), delta_color="inverse")
-        m4.metric("Peso", f"{df['weight'].iloc[-1]:.1f}kg", get_delta('weight'), delta_color="inverse")
+        m1.metric("Ossigeno", f"{df['oxygen'].iloc[-1]:.0f}%")
+        m2.metric("BPM", f"{df['bpm'].iloc[-1]:.0f}")
+        m3.metric("Press. Max", f"{df['systolic'].iloc[-1]:.0f}")
+        m4.metric("Peso", f"{df['weight'].iloc[-1]:.1f}kg")
 
         st.divider()
         t_graph, t_pearson, t_ref, t_reg = st.tabs(["📈 Trend & Medie", "🧬 Pearson IA", "📂 Referti", "📋 Registro & Report"])
@@ -160,24 +156,14 @@ if supabase:
             c_m3.write(f"**Sistolica Media:** {df['systolic'].mean():.0f}")
             c_m4.write(f"**Peso Medio:** {df['weight'].mean():.1f} kg")
             
-            cols_plot = ['oxygen', 'bpm', 'temperature', 'systolic', 'diastolic', 'weight']
-            valid_cols = [c for c in cols_plot if c in df.columns and not df[c].dropna().empty]
+            valid_cols = [c for c in ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight'] if c in df.columns]
             st.plotly_chart(px.line(df, x='created_at', y=valid_cols, markers=True, template="plotly_white"), use_container_width=True)
 
         with t_pearson:
             st.subheader("Studio delle Correlazioni")
-            c_info, c_map = st.columns([1, 2])
-            with c_info:
-                st.markdown("**Cos'è Pearson?** Misura il legame tra parametri.")
-                if len(valid_cols) > 1:
-                    corr_df = df[valid_cols].corr()
-                    strong = corr_df.unstack().sort_values(ascending=False)
-                    res_c = strong[strong < 0.99].head(1)
-                    if not res_c.empty:
-                        st.success(f"💡 **Insight:** Legame tra {res_c.index[0][0]} e {res_c.index[0][1]} ({res_c.values[0]:.2f})")
-            with c_map:
-                if len(valid_cols) > 1:
-                    st.plotly_chart(px.imshow(corr_df, text_auto=".2f", color_continuous_scale='RdBu_r'), use_container_width=True)
+            if len(valid_cols) > 1:
+                corr_df = df[valid_cols].corr()
+                st.plotly_chart(px.imshow(corr_df, text_auto=".2f", color_continuous_scale='RdBu_r'), use_container_width=True)
 
         with t_ref:
             up = st.file_uploader("Carica PDF", type="pdf")
@@ -195,23 +181,21 @@ if supabase:
                 st.write("🖨️ **Export Medico**")
                 try:
                     pdf_data = export_pdf(df)
-                    st.download_button("Genera Report PDF", data=pdf_data, file_name="report_clinico.pdf", mime="application/pdf", use_container_width=True)
+                    st.download_button("Genera Report PDF", data=pdf_data, file_name="report_completo.pdf", mime="application/pdf", use_container_width=True)
                 except Exception as e: st.error(f"Errore: {e}")
             with c_tab:
                 df_s = df.sort_values(by='created_at', ascending=False).copy()
                 df_s['Data Ora'] = df_s['created_at'].dt.strftime('%d/%m/%Y %H:%M')
-                st.dataframe(df_s[["Data Ora", "oxygen", "bpm", "weight", "systolic", "diastolic", "notes"]], use_container_width=True, hide_index=True)
+                st.dataframe(df_s[["Data Ora", "oxygen", "bpm", "weight", "systolic", "diastolic"]], use_container_width=True, hide_index=True)
 
     with st.sidebar:
         st.header("⚙️ Gestione")
         with st.expander("➕ Nuova Misura", expanded=True):
             with st.form("h_form", clear_on_submit=True):
-                o, b, t = st.number_input("O2%", 0, 100, 0), st.number_input("BPM", 0, 250, 0), st.number_input("Temp°C", 0.0, 45.0, 0.0, 0.1)
-                s, d, w = st.number_input("Sistolica", 0, 250, 0), st.number_input("Diastolica", 0, 150, 0), st.number_input("Peso kg", 0.0, 300.0, 0.0, 0.1)
+                o, b, s, d, w = st.number_input("O2%", 0), st.number_input("BPM", 0), st.number_input("Sistolica", 0), st.number_input("Diastolica", 0), st.number_input("Peso kg", 0.0)
                 n = st.text_area("Note")
                 if st.form_submit_button("Salva"):
-                    data = {"oxygen":o if o>0 else None, "bpm":b if b>0 else None, "temperature":t if t>0 else None,
-                            "systolic":s if s>0 else None, "diastolic":d if d>0 else None, "weight":w if w>0 else None, "notes":n if n.strip() else None}
+                    data = {"oxygen":o if o>0 else None, "bpm":b if b>0 else None, "systolic":s if s>0 else None, "diastolic":d if d>0 else None, "weight":w if w>0 else None, "notes":n}
                     supabase.table("health_logs").insert(data).execute()
                     st.rerun()
         if st.button("Logout 🚪", use_container_width=True):
