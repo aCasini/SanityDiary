@@ -37,13 +37,15 @@ supabase = init_db()
 # --- 4. FUNZIONI DI ANALISI AVANZATA ---
 def get_ai_insights(df):
     if df.empty: return [], ""
+    # Scansione ultimi 10 record per alert
     recent = df.sort_values(by='created_at', ascending=True).tail(10)
     alerts = []
     if (recent['systolic'] > 140).any():
-        alerts.append(f"Rilevati picchi di pressione sistolica (>140) negli ultimi dati.")
+        alerts.append("Rilevati episodi di pressione sistolica alta (>140) nei dati recenti.")
     if (recent['oxygen'] < 94).any():
-        alerts.append(f"Rilevati cali di ossigenazione sotto il 94%.")
+        alerts.append("Rilevati cali di ossigenazione sotto il 94% negli ultimi record.")
     
+    # Analisi Correlazione Pearson
     cols = ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight']
     valid_cols = [c for c in cols if c in df.columns and not df[c].dropna().empty]
     correlation_str = ""
@@ -53,7 +55,7 @@ def get_ai_insights(df):
         top = strong[strong < 0.98].head(1)
         if not top.empty:
             v1, v2 = top.index[0]
-            correlation_str = f"L'analisi IA indica una correlazione di {top.values[0]:.2f} tra {v1} e {v2}."
+            correlation_str = f"L'analisi IA indica un legame statistico (r={top.values[0]:.2f}) tra {v1.capitalize()} e {v2.capitalize()}."
             
     return alerts, correlation_str
 
@@ -74,7 +76,7 @@ def export_pdf(df):
     alerts, corr_text = get_ai_insights(df)
     if alerts:
         for a in alerts: pdf.multi_cell(0, 8, f"  - {a}")
-    else: pdf.cell(0, 8, "  - Nessuna anomalia critica rilevata.", ln=True)
+    else: pdf.cell(0, 8, "  - Nessuna anomalia critica rilevata nei trend recenti.", ln=True)
     if corr_text:
         pdf.ln(2)
         pdf.set_font("Arial", "I", 11)
@@ -122,22 +124,18 @@ if supabase:
     st.title("🩺 Sanity Diary Intelligence")
 
     if not df.empty:
-        # --- DASHBOARD METRICHE CON ICONE TREND ---
+        # --- DASHBOARD METRICHE ---
         m1, m2, m3, m4 = st.columns(4)
-        
         def calc_delta(col):
             if len(df) >= 2:
-                last = df[col].iloc[-1]
-                prev = df[col].iloc[-2]
-                if pd.notnull(last) and pd.notnull(prev):
-                    return round(float(last - prev), 2)
+                last, prev = df[col].iloc[-1], df[col].iloc[-2]
+                if pd.notnull(last) and pd.notnull(prev): return round(float(last - prev), 2)
             return None
 
-        # Configurazione metriche (inverse=True significa che SE SALE è ROSSO, es. pressione)
         m1.metric("Ossigeno", f"{df['oxygen'].iloc[-1]:.0f}%", calc_delta('oxygen'))
         m2.metric("BPM", f"{df['bpm'].iloc[-1]:.0f}", calc_delta('bpm'), delta_color="inverse")
         m3.metric("Press. Max", f"{df['systolic'].iloc[-1]:.0f}", calc_delta('systolic'), delta_color="inverse")
-        m4.metric("Peso", f"{df['weight'].iloc[-1]:.1f}kg", calc_delta('weight'), delta_color="normal")
+        m4.metric("Peso", f"{df['weight'].iloc[-1]:.1f}kg", calc_delta('weight'))
 
         st.divider()
         t_graph, t_pearson, t_ref, t_reg = st.tabs(["📈 Trend & Medie", "🧬 Pearson IA", "📂 Referti", "📋 Registro & Report"])
@@ -149,15 +147,28 @@ if supabase:
             c_m2.write(f"**BPM Medio:** {df['bpm'].mean():.0f}")
             c_m3.write(f"**Sistolica Media:** {df['systolic'].mean():.0f}")
             c_m4.write(f"**Peso Medio:** {df['weight'].mean():.1f} kg")
-            
             valid_cols = [c for c in ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight'] if c in df.columns]
             st.plotly_chart(px.line(df, x='created_at', y=valid_cols, markers=True, template="plotly_white"), use_container_width=True)
 
         with t_pearson:
-            st.subheader("Studio delle Correlazioni")
-            if len(valid_cols) > 1:
-                corr_df = df[valid_cols].corr()
-                st.plotly_chart(px.imshow(corr_df, text_auto=".2f", color_continuous_scale='RdBu_r'), use_container_width=True)
+            st.subheader("🧬 Studio delle Correlazioni Intelligenti")
+            c_info, c_map = st.columns([1, 2])
+            alerts, corr_text = get_ai_insights(df)
+            with c_info:
+                st.markdown("**Interpretazione IA:**")
+                if corr_text:
+                    st.info(f"💡 {corr_text}")
+                    st.caption("Il coefficiente di Pearson indica quanto due valori variano insieme. Valori vicini a 1.0 mostrano un forte legame diretto.")
+                else:
+                    st.write("Dati insufficienti per il calcolo IA.")
+                
+                if alerts:
+                    st.warning("⚠️ **Alert Recenti:**\n" + "\n".join([f"- {a}" for a in alerts]))
+
+            with c_map:
+                if len(valid_cols) > 1:
+                    corr_df = df[valid_cols].corr()
+                    st.plotly_chart(px.imshow(corr_df, text_auto=".2f", color_continuous_scale='RdBu_r'), use_container_width=True)
 
         with t_ref:
             up = st.file_uploader("Carica PDF", type="pdf")
