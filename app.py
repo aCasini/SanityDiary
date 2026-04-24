@@ -14,9 +14,10 @@ def check_password():
         st.session_state.authenticated = False
     if st.session_state.authenticated:
         return True
+    
     st.title("🔐 Accesso Riservato")
     with st.form("login_form"):
-        password = st.text_input("Password:", type="password")
+        password = st.text_input("Inserisci la password di sicurezza:", type="password")
         if st.form_submit_button("Accedi"):
             if password == st.secrets.get("APP_PASSWORD"):
                 st.session_state.authenticated = True
@@ -33,12 +34,13 @@ if not check_password():
 def init_db():
     try:
         return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
-    except: return None
+    except:
+        return None
 
 supabase = init_db()
 
 if supabase:
-    # --- 4. PROMEMORIA VISITE (BANNER) ---
+    # --- 4. GESTIONE VISITE E PROMEMORIA (BANNER) ---
     st.title("🩺 Sanity Diary")
     
     try:
@@ -48,34 +50,36 @@ if supabase:
             .order("data_visita", desc=False)\
             .execute()
         
-        visite = res_visite.data
-        if visite:
-            prossima = visite[0]
+        if res_visite.data:
+            prossima = res_visite.data[0]
             data_f = datetime.strptime(prossima['data_visita'], '%Y-%m-%d').strftime('%d/%m/%Y')
             
             with st.container():
                 col_txt, col_btn = st.columns([4, 1])
-                col_txt.warning(f"🔔 **Promemoria:** {prossima['nome_visita']} il **{data_f}** presso **{prossima['luogo']}**")
-                if col_btn.button("✅ Completata", key=f"v_{prossima['id']}"):
+                col_txt.warning(f"🔔 **PROMEMORIA:** {prossima['nome_visita']} il **{data_f}** — Luogo: **{prossima['luogo']}**")
+                if col_btn.button("✅ Segna come completata", key=f"vis_{prossima['id']}"):
                     supabase.table("visite_mediche").update({"completata": True}).eq("id", prossima['id']).execute()
-                    st.success("Visita completata!")
+                    st.success("Ottimo! Visita completata.")
                     st.rerun()
-    except: pass
+    except:
+        pass
 
-    # --- 5. RECUPERO DATI LOGS ---
+    # --- 5. RECUPERO DATI SALUTE ---
     try:
         res = supabase.table("health_logs").select("*").order("created_at", desc=False).execute()
         df = pd.DataFrame(res.data) if res.data else pd.DataFrame()
         if not df.empty:
+            # Fix definitivo per le date ISO8601
             df['created_at'] = pd.to_datetime(df['created_at'], format='ISO8601', utc=True)
             df['created_at'] = df['created_at'].dt.tz_localize(None).dt.floor('s')
-    except: df = pd.DataFrame()
+    except:
+        df = pd.DataFrame()
 
-    # --- 6. SIDEBAR: INPUT COMPLETI ---
+    # --- 6. SIDEBAR: GESTIONE INPUT ---
     with st.sidebar:
-        st.header("⚙️ Gestione Dati")
+        st.header("⚙️ Pannello Controllo")
         
-        # Form Misurazioni COMPLETO
+        # Inserimento Misurazioni
         with st.expander("➕ Nuova Misurazione", expanded=False):
             with st.form("health_form", clear_on_submit=True):
                 oxy = st.number_input("Ossigeno %", 0, 100, 0)
@@ -84,10 +88,9 @@ if supabase:
                 sys = st.number_input("Pressione Max (Sistolica)", 0, 250, 0)
                 dia = st.number_input("Pressione Min (Diastolica)", 0, 150, 0)
                 weight = st.number_input("Peso (kg)", 0.0, 300.0, 0.0, 0.1)
-                notes = st.text_area("Note e Sintomi")
+                notes = st.text_area("Note/Sintomi")
                 
                 if st.form_submit_button("Salva Misurazione"):
-                    # Conversione 0 -> NULL per il DB
                     data_to_insert = {
                         "oxygen": oxy if oxy > 0 else None,
                         "bpm": bpm if bpm > 0 else None,
@@ -98,16 +101,15 @@ if supabase:
                         "notes": notes if notes.strip() != "" else None
                     }
                     supabase.table("health_logs").insert(data_to_insert).execute()
-                    st.success("Dati salvati!")
                     st.rerun()
 
-        # Form Programmazione Visita
+        # Inserimento Appuntamenti
         with st.expander("📅 Programma Visita", expanded=False):
             with st.form("visita_form", clear_on_submit=True):
-                n_visita = st.text_input("Nome Visita")
+                n_visita = st.text_input("Specialista / Tipo Visita")
                 d_visita = st.date_input("Data", value=datetime.now())
-                l_visita = st.text_input("Luogo")
-                if st.form_submit_button("Conferma Visita"):
+                l_visita = st.text_input("Ospedale / Studio")
+                if st.form_submit_button("Salva Appuntamento"):
                     if n_visita:
                         supabase.table("visite_mediche").insert({
                             "nome_visita": n_visita,
@@ -115,54 +117,78 @@ if supabase:
                             "luogo": l_visita
                         }).execute()
                         st.rerun()
-                    else: st.warning("Inserisci il nome della visita")
+                    else:
+                        st.warning("Inserisci almeno il nome della visita.")
 
         st.divider()
-        if st.button("Esci 🚪", use_container_width=True):
+        if st.button("Esci (Logout) 🚪", use_container_width=True):
             st.session_state.authenticated = False
             st.rerun()
 
-    # --- 7. GRAFICI ---
+    # --- 7. VISUALIZZAZIONE GRAFICI ---
     if not df.empty:
         st.subheader("📈 Andamento Parametri")
-        cols_to_show = ['oxygen', 'bpm', 'temperature', 'systolic', 'diastolic', 'weight']
-        # Filtriamo solo le colonne che esistono e hanno dati
-        valid_cols = [c for c in cols_to_show if c in df.columns and not df[c].dropna().empty]
+        cols_plot = ['oxygen', 'bpm', 'temperature', 'systolic', 'diastolic', 'weight']
+        valid_cols = [c for c in cols_plot if c in df.columns and not df[c].dropna().empty]
         
         if valid_cols:
-            fig = px.line(df, x='created_at', y=valid_cols, markers=True)
+            fig = px.line(df, x='created_at', y=valid_cols, markers=True, 
+                         labels={"value": "Valore", "created_at": "Data", "variable": "Parametro"})
             fig.update_layout(hovermode="x unified")
             st.plotly_chart(fig, use_container_width=True)
 
-    # --- 8. ARCHIVIO REFERTI ---
+    # --- 8. ARCHIVIO E VISUALIZZATORE PDF ---
     st.divider()
-    st.header("📂 Archivio Referti PDF")
-    with st.expander("📤 Carica nuovo referto"):
-        up_file = st.file_uploader("Trascina qui il PDF", type="pdf")
-        if st.button("Salva PDF") and up_file:
-            b64 = base64.b64encode(up_file.read()).decode('utf-8')
+    st.header("📂 Archivio Referti")
+    
+    with st.expander("📤 Carica nuovo PDF"):
+        up_file = st.file_uploader("Seleziona il file referto", type="pdf")
+        if st.button("Archivia PDF") and up_file:
+            b64_pdf = base64.b64encode(up_file.read()).decode('utf-8')
             supabase.table("referti_medici").insert({
-                "nome_referto": up_file.name, 
-                "data_esame": str(datetime.now().date()), 
-                "file_path": b64
+                "nome_referto": up_file.name,
+                "data_esame": str(datetime.now().date()),
+                "file_path": b64_pdf
             }).execute()
-            st.success("Referto caricato!")
+            st.success("File caricato correttamente!")
             st.rerun()
 
-    # Elenco Referti
+    # Lista Referti con opzione "Visualizza"
     try:
         res_ref = supabase.table("referti_medici").select("*").order("data_esame", desc=True).execute()
         if res_ref.data:
             for ref in res_ref.data:
-                c1, c2 = st.columns([4, 1])
+                c1, c2, c3 = st.columns([3, 1, 1])
                 c1.write(f"📄 **{ref['nome_referto']}** — del {ref['data_esame']}")
-                c2.download_button("Download", base64.b64decode(ref['file_path']), file_name=ref['nome_referto'], key=f"dl_{ref['id']}")
-    except: pass
+                
+                # Download
+                pdf_data = base64.b64decode(ref['file_path'])
+                c2.download_button("Scarica ⬇️", pdf_data, file_name=ref['nome_referto'], key=f"dl_{ref['id']}")
+                
+                # Visualizza
+                if c3.button("Visualizza 👁️", key=f"v_{ref['id']}"):
+                    st.session_state.pdf_view = ref['file_path']
+                    st.session_state.pdf_title = ref['nome_referto']
+
+            # Area di visualizzazione PDF (appare solo se cliccato)
+            if "pdf_view" in st.session_state:
+                st.divider()
+                st.subheader(f"Anteprima: {st.session_state.pdf_title}")
+                pdf_display = f'<iframe src="data:application/pdf;base64,{st.session_state.pdf_view}" width="100%" height="800" type="application/pdf"></iframe>'
+                st.markdown(pdf_display, unsafe_allow_html=True)
+                if st.button("Chiudi Anteprima ❌"):
+                    del st.session_state.pdf_view
+                    st.rerun()
+    except:
+        st.info("Nessun referto presente.")
 
     # --- 9. TABELLA STORICA ---
     if not df.empty:
         st.divider()
-        st.subheader("📋 Registro Completo")
+        st.subheader("📋 Registro Storico")
         df_display = df.copy()
         df_display['created_at'] = df_display['created_at'].dt.strftime('%d/%m/%Y %H:%M')
         st.dataframe(df_display.sort_values(by='created_at', ascending=False), use_container_width=True, hide_index=True)
+
+else:
+    st.error("Connessione a Supabase non riuscita. Controlla i Secrets.")
