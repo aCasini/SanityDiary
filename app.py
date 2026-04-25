@@ -48,24 +48,28 @@ except:
 
 # --- 4. FUNZIONI IA E PDF ---
 def clean_text(text):
-    """Rimuove caratteri speciali che mandano in crash FPDF."""
     if not text: return ""
-    # Sostituisce caratteri comuni o rimuove emoji/simboli non-latin1
     return text.encode('latin-1', 'replace').decode('latin-1').replace('?', ' ')
 
-def get_ai_narrative_analysis(df):
+def get_ai_narrative_analysis(df, extra_context=""):
     if not client_ai: return "Chiave API non configurata."
     if df.empty or len(df) < 2: return "Dati insufficienti per l'analisi."
     
     recent = df.sort_values(by='created_at', ascending=False).head(10)
     summary = recent.to_string(columns=['created_at', 'oxygen', 'bpm', 'systolic', 'diastolic', 'notes', 'temperature'])
     
+    # Integrazione dei dati extra nel prompt
+    info_extra = f"\nDATI AGGIUNTIVI FORNITI DAL PAZIENTE: {extra_context}" if extra_context else ""
+    
     prompt_paziente = f"""
     CONTESTO CLINICO: Il paziente è in fase post-dimissione dopo un ricovero per EMBOLIA POLMONARE ESTESA con sforzo grave sul ventricolo destro.
     PAZIENTE: Alessio Casini
-    OBIETTIVO: Analizza i dati recenti (O2, BPM, pressione e note) per stabilità.
-    DATI:
+    OBIETTIVO: Analizza i dati recenti (O2, BPM, pressione e note) per stabilità. Tenere conto anche delle informazioni extra fornite.
+    
+    DATI PARAMETRI VITALI:
     {summary}
+    {info_extra}
+    
     Fornisci un commento strutturato e professionale. Non usare emoji.
     """
     
@@ -88,16 +92,13 @@ def export_pdf(df, ai_comment):
     pdf.cell(0, 10, clean_text("Report Clinico - Monitoraggio Post-Embolia"), ln=True, align="C")
     pdf.ln(5)
     
-    # Sezione IA
     pdf.set_fill_color(245, 245, 245)
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 10, " Analisi Assistente IA", ln=True, fill=True)
     pdf.set_font("Arial", "", 10)
-    # Pulizia del commento dell'IA prima di scriverlo
     pdf.multi_cell(0, 7, clean_text(ai_comment))
     pdf.ln(5)
 
-    # Tabella Dati
     pdf.set_fill_color(230, 240, 255)
     pdf.set_font("Arial", "B", 9)
     cols = [("Data Ora", 35), ("O2", 15), ("BPM", 15), ("T C", 15), ("Press", 25), ("Peso", 20), ("Note", 65)]
@@ -114,7 +115,6 @@ def export_pdf(df, ai_comment):
         p = f"{row.get('systolic','-')}/{row.get('diastolic','-')}"
         pdf.cell(25, 8, p, 1, 0, "C")
         pdf.cell(20, 8, str(row.get('weight','-')), 1, 0, "C")
-        # Pulizia anche per le note dell'utente
         pdf.cell(65, 8, clean_text(str(row.get('notes','-'))[:40]), 1)
         pdf.ln()
     return bytes(pdf.output())
@@ -130,7 +130,6 @@ if supabase:
 
     st.title("🩺 Sanity Diary Intelligence")
 
-    # Banner Visite
     try:
         res_v = supabase.table("visite_mediche").select("*").eq("completata", False).order("data_visita").execute()
         if res_v.data:
@@ -139,7 +138,6 @@ if supabase:
     except: pass
 
     if not df.empty:
-        # Metriche
         m = st.columns(4)
         def get_delta(col):
             vals = df[col].dropna()
@@ -178,15 +176,24 @@ if supabase:
         with tabs[2]:
             st.subheader("🤖 Analisi Specialistica IA")
             st.info("Quadro Clinico: Monitoraggio Post-Embolia Polmonare Estesa.")
+            
+            # NUOVA SEZIONE: Input per dati extra
+            with st.expander("📝 Aggiungi dati per l'analisi (es. Eco Addome, Sintomi extra)"):
+                extra_input = st.text_area(
+                    "Inserisci qui i risultati di esami recenti o note specifiche per l'IA:",
+                    placeholder="Esempio: Eco addome mostra fegato regolare, milza nei limiti. Leggera stanchezza mattutina...",
+                    help="Questi dati non vengono salvati nel database, ma usati solo per questa sessione di analisi IA."
+                )
+
             if st.button("Esegui Analisi"):
-                with st.spinner("L'IA sta studiando i dati..."):
-                    st.session_state.ai_text = get_ai_narrative_analysis(df)
+                with st.spinner("L'IA sta studiando i dati vitali e le informazioni aggiuntive..."):
+                    st.session_state.ai_text = get_ai_narrative_analysis(df, extra_input)
             
             res_ai = st.session_state.get("ai_text", "")
             if res_ai:
                 st.markdown(res_ai)
             else:
-                st.write("Genera l'analisi per visualizzare il commento.")
+                st.write("Inserisci eventuali dati extra e genera l'analisi per visualizzare il commento.")
 
         with tabs[3]:
             st.subheader("Appuntamenti Medici")
@@ -219,7 +226,6 @@ if supabase:
             st.subheader("Registro Storico")
             df_display = df.sort_values(by='created_at', ascending=False).copy()
             df_display['Data'] = df_display['created_at'].dt.strftime('%d/%m/%Y %H:%M')
-            # Creazione PDF sicura
             pdf_report = export_pdf(df, st.session_state.get("ai_text", "Nessuna analisi generata."))
             st.download_button("Scarica Report PDF per il Medico", pdf_report, "report_clinico.pdf", "application/pdf")
             st.dataframe(df_display[['Data', 'oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature', 'notes']], use_container_width=True, hide_index=True)
