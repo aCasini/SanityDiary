@@ -46,17 +46,15 @@ def get_ai_narrative_analysis(df):
     if df.empty or len(df) < 2: return "Dati insufficienti per l'analisi."
     recent = df.sort_values(by='created_at', ascending=False).head(10)
     summary = recent.to_string(columns=['created_at', 'oxygen', 'bpm', 'systolic', 'diastolic', 'notes'])
-    
     try:
-        # Usiamo gpt-3.5-turbo per massima compatibilità
         response = client_ai.chat.completions.create(
             model="gpt-3.5-turbo",
-            messages=[{"role": "system", "content": "Sei un assistente medico. Analizza i trend e le note senza fare diagnosi."},
-                      {"role": "user", "content": f"Analizza questi dati:\n{summary}"}]
+            messages=[{"role": "system", "content": "Sei un assistente medico esperto. Analizza i trend senza fare diagnosi."},
+                      {"role": "user", "content": f"Analizza questi dati pazienti:\n{summary}"}]
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"Nota: Analisi testuale non disponibile (Verifica API Key). Dettaglio: {e}"
+        return f"Nota: Analisi IA non disponibile (Verifica API Key o Quota). Errore: {e}"
 
 def export_pdf(df, ai_comment):
     pdf = FPDF()
@@ -65,7 +63,6 @@ def export_pdf(df, ai_comment):
     pdf.cell(0, 10, "Report Clinico Sanity Diary Intelligence", ln=True, align="C")
     pdf.ln(5)
     
-    # Sezione IA
     pdf.set_fill_color(240, 240, 240)
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 10, " Analisi Assistente IA", ln=True, fill=True)
@@ -73,7 +70,6 @@ def export_pdf(df, ai_comment):
     pdf.multi_cell(0, 7, ai_comment)
     pdf.ln(5)
 
-    # Tabella
     pdf.set_fill_color(200, 220, 255)
     pdf.set_font("Arial", "B", 9)
     cols = [("Data", 30), ("O2", 15), ("BPM", 15), ("Temp", 15), ("Press", 25), ("Peso", 20), ("Note", 70)]
@@ -81,11 +77,12 @@ def export_pdf(df, ai_comment):
     pdf.ln()
     pdf.set_font("Arial", "", 8)
     for _, row in df.sort_values(by='created_at', ascending=False).head(40).iterrows():
-        pdf.cell(30, 8, row['created_at'].strftime('%d/%m/%y %H:%M'), 1)
+        date_str = row['created_at'].strftime('%d/%m/%y %H:%M') if hasattr(row['created_at'], 'strftime') else str(row['created_at'])
+        pdf.cell(30, 8, date_str, 1)
         pdf.cell(15, 8, str(row.get('oxygen','-')), 1, 0, "C")
         pdf.cell(15, 8, str(row.get('bpm','-')), 1, 0, "C")
         pdf.cell(15, 8, str(row.get('temperature','-')), 1, 0, "C")
-        p = f"{row['systolic']}/{row['diastolic']}" if pd.notnull(row.get('systolic')) else "-"
+        p = f"{row.get('systolic','-')}/{row.get('diastolic','-')}"
         pdf.cell(25, 8, p, 1, 0, "C")
         pdf.cell(20, 8, str(row.get('weight','-')), 1, 0, "C")
         pdf.cell(70, 8, str(row.get('notes','-'))[:45], 1)
@@ -94,11 +91,14 @@ def export_pdf(df, ai_comment):
 
 # --- 5. LOGICA APPLICATIVA ---
 if supabase:
-    # Caricamento dati
+    # CARICAMENTO DATI (Gestione Errori Data Blindata)
     res = supabase.table("health_logs").select("*").order("created_at").execute()
     df = pd.DataFrame(res.data) if res.data else pd.DataFrame()
+    
     if not df.empty:
-        df['created_at'] = pd.to_datetime(df['created_at']).dt.tz_localize(None)
+        # Correzione ValueError: utc=True e errors='coerce' per evitare crash
+        df['created_at'] = pd.to_datetime(df['created_at'], utc=True, errors='coerce').dt.tz_localize(None)
+        df = df.dropna(subset=['created_at']) # Rimuove eventuali righe con date corrotte
 
     st.title("🩺 Sanity Diary Intelligence")
 
@@ -107,15 +107,17 @@ if supabase:
         res_v = supabase.table("visite_mediche").select("*").eq("completata", False).order("data_visita").execute()
         if res_v.data:
             v = res_v.data[0]
-            st.warning(f"🔔 **Promemoria:** {v['nome_visita']} il {v['data_visita']} ({v['luogo']})")
+            st.warning(f"🔔 **Prossima Visita:** {v['nome_visita']} il {v['data_visita']} ({v['luogo']})")
     except: pass
 
     if not df.empty:
-        # Metriche con Trend (Frecce)
+        # Metriche Dashboard
         m = st.columns(4)
         def get_delta(col):
             if len(df) < 2: return None
-            return round(float(df[col].iloc[-1] - df[col].iloc[-2]), 1)
+            val = df[col].dropna()
+            if len(val) < 2: return None
+            return round(float(val.iloc[-1] - val.iloc[-2]), 1)
 
         m[0].metric("Ossigeno", f"{df['oxygen'].iloc[-1]}%", get_delta('oxygen'))
         m[1].metric("BPM", f"{df['bpm'].iloc[-1]}", get_delta('bpm'), delta_color="inverse")
@@ -123,29 +125,35 @@ if supabase:
         m[3].metric("Peso", f"{df['weight'].iloc[-1]}kg", get_delta('weight'))
 
         st.divider()
-        tabs = st.tabs(["📈 Trend & Grafici", "🤖 Assistente IA", "📅 Visite", "📂 Referti", "📋 Registro"])
+        tabs = st.tabs(["📈 Trend", "🧬 Pearson", "🤖 Assistente IA", "📅 Visite", "📂 Referti", "📋 Registro"])
 
         with tabs[0]:
             st.subheader("Andamento Parametri")
-            v_cols = [c for c in ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight'] if c in df.columns]
+            v_cols = [c for c in ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature'] if c in df.columns]
             st.plotly_chart(px.line(df, x='created_at', y=v_cols, markers=True, template="plotly_white"), use_container_width=True)
 
         with tabs[1]:
-            st.subheader("🧬 Analisi Narrativa IA")
+            st.subheader("🧬 Studio delle Correlazioni (Pearson)")
+            corr_cols = [c for c in ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature'] if c in df.columns]
+            if len(corr_cols) > 1:
+                corr_matrix = df[corr_cols].corr()
+                st.plotly_chart(px.imshow(corr_matrix, text_auto=".2f", color_continuous_scale='RdBu_r'), use_container_width=True)
+            else: st.write("Dati insufficienti per la matrice.")
+
+        with tabs[2]:
+            st.subheader("🤖 Analisi Narrativa IA")
             if st.button("Genera Analisi con GPT"):
-                with st.spinner("Analizzando i dati..."):
+                with st.spinner("L'IA sta elaborando i dati..."):
                     st.session_state.ai_text = get_ai_narrative_analysis(df)
             st.info(st.session_state.get("ai_text", "Clicca il tasto sopra per generare l'analisi."))
 
-        with tabs[2]:
+        with tabs[3]:
             st.subheader("Gestione Visite")
             c1, c2 = st.columns([1, 2])
             with c1:
-                with st.form("v"):
-                    nv = st.text_input("Tipo Visita")
-                    dv = st.date_input("Data")
-                    lv = st.text_input("Luogo")
-                    if st.form_submit_button("Salva Visita"):
+                with st.form("v_form"):
+                    nv, dv, lv = st.text_input("Tipo Visita"), st.date_input("Data"), st.text_input("Luogo")
+                    if st.form_submit_button("Salva"):
                         supabase.table("visite_mediche").insert({"nome_visita":nv, "data_visita":str(dv), "luogo":lv, "completata":False}).execute()
                         st.rerun()
             with c2:
@@ -158,30 +166,26 @@ if supabase:
                         supabase.table("visite_mediche").update({"completata":True}).eq("id", v['id']).execute()
                         st.rerun()
 
-        with tabs[3]:
+        with tabs[4]:
             st.subheader("Archivio Referti")
             up = st.file_uploader("Carica PDF", type="pdf")
-            if st.button("Salva Referto") and up:
+            if st.button("Salva PDF") and up:
                 b64 = base64.b64encode(up.read()).decode('utf-8')
                 supabase.table("referti_medici").insert({"nome_referto":up.name, "data_esame":str(datetime.now().date()), "file_path":b64}).execute()
                 st.rerun()
             for r in (supabase.table("referti_medici").select("*").execute().data or []):
                 st.download_button(f"📄 {r['nome_referto']}", base64.b64decode(r['file_path']), file_name=r['nome_referto'], key=f"r_{r['id']}")
 
-        with tabs[4]:
+        with tabs[5]:
             st.subheader("Registro Storico")
-            pdf_btn = st.download_button("Genera Report PDF", export_pdf(df, st.session_state.get("ai_text", "Nessuna analisi IA generata.")), "report.pdf", "application/pdf")
+            st.download_button("Genera Report PDF", export_pdf(df, st.session_state.get("ai_text", "Analisi IA non generata.")), "report.pdf", "application/pdf")
             st.dataframe(df.sort_values(by='created_at', ascending=False), use_container_width=True, hide_index=True)
 
     with st.sidebar:
         st.header("⚙️ Inserimento")
-        with st.form("h", clear_on_submit=True):
-            o = st.number_input("O2%", 0)
-            b = st.number_input("BPM", 0)
-            s = st.number_input("Sistolica", 0)
-            d = st.number_input("Diastolica", 0)
-            w = st.number_input("Peso kg", 0.0)
-            t = st.number_input("Temp °C", 0.0)
+        with st.form("h_form", clear_on_submit=True):
+            o, b, s, d = st.number_input("O2%", 0), st.number_input("BPM", 0), st.number_input("Sistolica", 0), st.number_input("Diastolica", 0)
+            w, t = st.number_input("Peso kg", 0.0), st.number_input("Temp °C", 0.0)
             n = st.text_area("Note")
             if st.form_submit_button("Salva"):
                 supabase.table("health_logs").insert({"oxygen":o, "bpm":b, "systolic":s, "diastolic":d, "weight":w, "temperature":t, "notes":n}).execute()
