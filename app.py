@@ -9,7 +9,7 @@ import streamlit.components.v1 as components
 from openai import OpenAI
 
 # --- 1. CONFIGURAZIONE PAGINA & PWA ---
-st.set_page_config(page_title="Sanity Diary AI", page_icon="🩺", layout="wide")
+st.set_page_config(page_title="Sanity Diary AI", page_icon="🧬", layout="wide")
 
 def inject_pwa():
     pwa_html = """<link rel="manifest" href="./manifest.json"><script>if('serviceWorker' in navigator){navigator.serviceWorker.register('./sw.js');}</script>"""
@@ -39,22 +39,33 @@ def init_db():
     return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
 supabase = init_db()
-client_ai = OpenAI(api_key=st.secrets.get("OPENAI_API_KEY", "dummy_key"))
+
+# Gestione sicura client OpenAI
+try:
+    api_key = st.secrets.get("OPENAI_API_KEY")
+    client_ai = OpenAI(api_key=api_key) if api_key else None
+except:
+    client_ai = None
 
 # --- 4. FUNZIONI IA E PDF ---
 def get_ai_narrative_analysis(df):
+    if not client_ai: return "Chiave API non configurata nei Secrets."
     if df.empty or len(df) < 2: return "Dati insufficienti per l'analisi."
+    
     recent = df.sort_values(by='created_at', ascending=False).head(10)
-    summary = recent.to_string(columns=['created_at', 'oxygen', 'bpm', 'systolic', 'diastolic', 'notes'])
+    summary = recent.to_string(columns=['created_at', 'oxygen', 'bpm', 'systolic', 'diastolic', 'notes', 'temperature'])
+    
     try:
         response = client_ai.chat.completions.create(
             model="gpt-3.5-turbo",
-            messages=[{"role": "system", "content": "Sei un assistente medico esperto. Analizza i trend senza fare diagnosi."},
-                      {"role": "user", "content": f"Analizza questi dati pazienti:\n{summary}"}]
+            messages=[{"role": "system", "content": "Sei un assistente medico. Analizza i trend senza fare diagnosi."},
+                      {"role": "user", "content": f"Analizza questi dati:\n{summary}"}]
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"Nota: Analisi IA non disponibile (Verifica API Key o Quota). Errore: {e}"
+        if "insufficient_quota" in str(e):
+            return "⚠️ Errore Quota: Il tuo account OpenAI ha esaurito il credito o il piano è scaduto. Verifica su platform.openai.com."
+        return f"Errore API: {e}"
 
 def export_pdf(df, ai_comment):
     pdf = FPDF()
@@ -63,21 +74,21 @@ def export_pdf(df, ai_comment):
     pdf.cell(0, 10, "Report Clinico Sanity Diary Intelligence", ln=True, align="C")
     pdf.ln(5)
     
-    pdf.set_fill_color(240, 240, 240)
+    pdf.set_fill_color(245, 245, 245)
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 10, " Analisi Assistente IA", ln=True, fill=True)
     pdf.set_font("Arial", "", 10)
     pdf.multi_cell(0, 7, ai_comment)
     pdf.ln(5)
 
-    pdf.set_fill_color(200, 220, 255)
+    pdf.set_fill_color(230, 240, 255)
     pdf.set_font("Arial", "B", 9)
-    cols = [("Data", 30), ("O2", 15), ("BPM", 15), ("Temp", 15), ("Press", 25), ("Peso", 20), ("Note", 70)]
+    cols = [("Data", 30), ("O2", 15), ("BPM", 15), ("T C", 15), ("Press", 25), ("Peso", 20), ("Note", 70)]
     for h, w in cols: pdf.cell(w, 10, h, 1, 0, "C", True)
     pdf.ln()
     pdf.set_font("Arial", "", 8)
     for _, row in df.sort_values(by='created_at', ascending=False).head(40).iterrows():
-        date_str = row['created_at'].strftime('%d/%m/%y %H:%M') if hasattr(row['created_at'], 'strftime') else str(row['created_at'])
+        date_str = row['created_at'].strftime('%d/%m/%y %H:%M')
         pdf.cell(30, 8, date_str, 1)
         pdf.cell(15, 8, str(row.get('oxygen','-')), 1, 0, "C")
         pdf.cell(15, 8, str(row.get('bpm','-')), 1, 0, "C")
@@ -91,14 +102,12 @@ def export_pdf(df, ai_comment):
 
 # --- 5. LOGICA APPLICATIVA ---
 if supabase:
-    # CARICAMENTO DATI (Gestione Errori Data Blindata)
     res = supabase.table("health_logs").select("*").order("created_at").execute()
     df = pd.DataFrame(res.data) if res.data else pd.DataFrame()
     
     if not df.empty:
-        # Correzione ValueError: utc=True e errors='coerce' per evitare crash
         df['created_at'] = pd.to_datetime(df['created_at'], utc=True, errors='coerce').dt.tz_localize(None)
-        df = df.dropna(subset=['created_at']) # Rimuove eventuali righe con date corrotte
+        df = df.dropna(subset=['created_at'])
 
     st.title("🩺 Sanity Diary Intelligence")
 
@@ -107,17 +116,15 @@ if supabase:
         res_v = supabase.table("visite_mediche").select("*").eq("completata", False).order("data_visita").execute()
         if res_v.data:
             v = res_v.data[0]
-            st.warning(f"🔔 **Prossima Visita:** {v['nome_visita']} il {v['data_visita']} ({v['luogo']})")
+            st.warning(f"📅 **Promemoria:** {v['nome_visita']} il {v['data_visita']} presso {v['luogo']}")
     except: pass
 
     if not df.empty:
         # Metriche Dashboard
         m = st.columns(4)
         def get_delta(col):
-            if len(df) < 2: return None
-            val = df[col].dropna()
-            if len(val) < 2: return None
-            return round(float(val.iloc[-1] - val.iloc[-2]), 1)
+            vals = df[col].dropna()
+            return round(float(vals.iloc[-1] - vals.iloc[-2]), 1) if len(vals) >= 2 else None
 
         m[0].metric("Ossigeno", f"{df['oxygen'].iloc[-1]}%", get_delta('oxygen'))
         m[1].metric("BPM", f"{df['bpm'].iloc[-1]}", get_delta('bpm'), delta_color="inverse")
@@ -125,49 +132,68 @@ if supabase:
         m[3].metric("Peso", f"{df['weight'].iloc[-1]}kg", get_delta('weight'))
 
         st.divider()
-        tabs = st.tabs(["📈 Trend", "🧬 Pearson", "🤖 Assistente IA", "📅 Visite", "📂 Referti", "📋 Registro"])
+        tabs = st.tabs(["📈 Trend Completi", "🧬 Studio Correlazioni", "🤖 Assistente IA", "📅 Visite", "📂 Referti", "📋 Registro"])
 
         with tabs[0]:
-            st.subheader("Andamento Parametri")
-            v_cols = [c for c in ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature'] if c in df.columns]
-            st.plotly_chart(px.line(df, x='created_at', y=v_cols, markers=True, template="plotly_white"), use_container_width=True)
+            st.subheader("Andamento Temporale di Tutti i Parametri")
+            # Includiamo esplicitamente tutti i parametri numerici
+            all_params = ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature']
+            available_cols = [c for c in all_params if c in df.columns]
+            st.plotly_chart(px.line(df, x='created_at', y=available_cols, markers=True, template="plotly_white"), use_container_width=True)
 
         with tabs[1]:
-            st.subheader("🧬 Studio delle Correlazioni (Pearson)")
-            corr_cols = [c for c in ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature'] if c in df.columns]
-            if len(corr_cols) > 1:
-                corr_matrix = df[corr_cols].corr()
-                st.plotly_chart(px.imshow(corr_matrix, text_auto=".2f", color_continuous_scale='RdBu_r'), use_container_width=True)
-            else: st.write("Dati insufficienti per la matrice.")
+            st.subheader("🧬 Studio delle Correlazioni Intelligenti")
+            c_desc, c_map = st.columns([1, 2])
+            with c_desc:
+                st.markdown("""
+                **Come leggere la Matrice di Pearson:**
+                * **Valore 1.0:** Correlazione perfetta (es. Sistolica vs Sistolica).
+                * **Valori vicini a 1.0:** I due parametri aumentano insieme (es. all'aumentare dei BPM aumenta la Pressione).
+                * **Valori vicini a -1.0:** All'aumentare di uno, l'altro diminuisce.
+                * **Valori vicini a 0:** Non c'è legame statistico tra i parametri.
+                """)
+                # Analisi automatica rapida
+                if len(available_cols) > 1:
+                    c_mat = df[available_cols].corr()
+                    strong = c_mat.unstack().sort_values(ascending=False)
+                    top = strong[strong < 0.95].head(1)
+                    if not top.empty:
+                        st.info(f"💡 Legame rilevato: **{top.index[0][0]}** e **{top.index[0][1]}** (r={top.values[0]:.2f})")
+            with c_map:
+                if len(available_cols) > 1:
+                    st.plotly_chart(px.imshow(df[available_cols].corr(), text_auto=".2f", color_continuous_scale='RdBu_r'), use_container_width=True)
 
         with tabs[2]:
-            st.subheader("🤖 Analisi Narrativa IA")
-            if st.button("Genera Analisi con GPT"):
-                with st.spinner("L'IA sta elaborando i dati..."):
+            st.subheader("🤖 Analisi Narrativa dell'IA")
+            if st.button("Genera Analisi "):
+                with st.spinner("Interrogazione modello..."):
                     st.session_state.ai_text = get_ai_narrative_analysis(df)
-            st.info(st.session_state.get("ai_text", "Clicca il tasto sopra per generare l'analisi."))
+            
+            res_ai = st.session_state.get("ai_text", "")
+            if "insufficient_quota" in res_ai:
+                st.error(res_ai)
+            else:
+                st.info(res_ai if res_ai else "Clicca per analizzare note e trend.")
 
         with tabs[3]:
-            st.subheader("Gestione Visite")
-            c1, c2 = st.columns([1, 2])
-            with c1:
-                with st.form("v_form"):
-                    nv, dv, lv = st.text_input("Tipo Visita"), st.date_input("Data"), st.text_input("Luogo")
-                    if st.form_submit_button("Salva"):
-                        supabase.table("visite_mediche").insert({"nome_visita":nv, "data_visita":str(dv), "luogo":lv, "completata":False}).execute()
+            st.subheader("Appuntamenti Medici")
+            cv1, cv2 = st.columns([1, 2])
+            with cv1:
+                with st.form("vis"):
+                    n_v, d_v, l_v = st.text_input("Visita"), st.date_input("Data"), st.text_input("Luogo")
+                    if st.form_submit_button("Aggiungi"):
+                        supabase.table("visite_mediche").insert({"nome_visita":n_v, "data_visita":str(d_v), "luogo":l_v, "completata":False}).execute()
                         st.rerun()
-            with c2:
-                res_v_all = supabase.table("visite_mediche").select("*").order("data_visita").execute()
-                for v in (res_v_all.data or []):
-                    col_a, col_b = st.columns([4, 1])
-                    status = "✅" if v['completata'] else "⏳"
-                    col_a.write(f"{status} **{v['data_visita']}**: {v['nome_visita']} ({v['luogo']})")
-                    if not v['completata'] and col_b.button("Fatto", key=f"v_{v['id']}"):
+            with cv2:
+                for v in (supabase.table("visite_mediche").select("*").order("data_visita").execute().data or []):
+                    ca, cb = st.columns([4, 1])
+                    ca.write(f"{'✅' if v['completata'] else '⏳'} **{v['data_visita']}**: {v['nome_visita']} ({v['luogo']})")
+                    if not v['completata'] and cb.button("Ok", key=f"v_{v['id']}"):
                         supabase.table("visite_mediche").update({"completata":True}).eq("id", v['id']).execute()
                         st.rerun()
 
         with tabs[4]:
-            st.subheader("Archivio Referti")
+            st.subheader("📂 Documenti e Referti")
             up = st.file_uploader("Carica PDF", type="pdf")
             if st.button("Salva PDF") and up:
                 b64 = base64.b64encode(up.read()).decode('utf-8')
@@ -178,14 +204,16 @@ if supabase:
 
         with tabs[5]:
             st.subheader("Registro Storico")
-            st.download_button("Genera Report PDF", export_pdf(df, st.session_state.get("ai_text", "Analisi IA non generata.")), "report.pdf", "application/pdf")
+            pdf_data = export_pdf(df, st.session_state.get("ai_text", "Analisi IA non richiesta."))
+            st.download_button("Genera Report Medico PDF", pdf_data, "report.pdf", "application/pdf")
             st.dataframe(df.sort_values(by='created_at', ascending=False), use_container_width=True, hide_index=True)
 
     with st.sidebar:
         st.header("⚙️ Inserimento")
-        with st.form("h_form", clear_on_submit=True):
-            o, b, s, d = st.number_input("O2%", 0), st.number_input("BPM", 0), st.number_input("Sistolica", 0), st.number_input("Diastolica", 0)
-            w, t = st.number_input("Peso kg", 0.0), st.number_input("Temp °C", 0.0)
+        with st.form("h", clear_on_submit=True):
+            o, b = st.number_input("O2%", 0), st.number_input("BPM", 0)
+            s, d = st.number_input("Sist.", 0), st.number_input("Diast.", 0)
+            w, t = st.number_input("Peso", 0.0), st.number_input("Temp", 0.0)
             n = st.text_area("Note")
             if st.form_submit_button("Salva"):
                 supabase.table("health_logs").insert({"oxygen":o, "bpm":b, "systolic":s, "diastolic":d, "weight":w, "temperature":t, "notes":n}).execute()
