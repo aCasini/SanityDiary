@@ -62,6 +62,7 @@ def get_ai_narrative_analysis(df):
     
     prompt_paziente = f"""
     CONTESTO CLINICO: Il paziente è in fase post-dimissione dopo un ricovero per EMBOLIA POLMONARE ESTESA con sforzo grave sul ventricolo destro.
+    PAZIENTE: Alessio Casini
     OBIETTIVO: Analizza i dati recenti (O2, BPM, pressione e note) per stabilità.
     DATI:
     {summary}
