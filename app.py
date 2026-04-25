@@ -61,7 +61,7 @@ def get_ai_narrative_analysis(df):
     summary = recent.to_string(columns=['created_at', 'oxygen', 'bpm', 'systolic', 'diastolic', 'notes', 'temperature'])
     
     prompt_paziente = f"""
-    CONTESTO CLINICO: Il paziente è in fase post-dimissione dopo un ricovero per EMBOLIA POLMONARE ESTESA.
+    CONTESTO CLINICO: Il paziente è in fase post-dimissione dopo un ricovero per EMBOLIA POLMONARE ESTESA con sforzo grave sul ventricolo destro.
     OBIETTIVO: Analizza i dati recenti (O2, BPM, pressione e note) per stabilità.
     DATI:
     {summary}
