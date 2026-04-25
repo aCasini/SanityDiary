@@ -48,38 +48,38 @@ except:
 
 # --- 4. FUNZIONI IA E PDF ---
 def clean_text(text):
+    """Rimuove caratteri speciali che mandano in crash FPDF."""
     if not text: return ""
+    # Sostituisce caratteri comuni o rimuove emoji/simboli non-latin1
     return text.encode('latin-1', 'replace').decode('latin-1').replace('?', ' ')
 
 def get_ai_narrative_analysis(df):
     if not client_ai: return "Chiave API non configurata."
     if df.empty or len(df) < 2: return "Dati insufficienti per l'analisi."
+    
     recent = df.sort_values(by='created_at', ascending=False).head(10)
     summary = recent.to_string(columns=['created_at', 'oxygen', 'bpm', 'systolic', 'diastolic', 'notes', 'temperature'])
+    
     prompt_paziente = f"""
-    CONTESTO CLINICO: Il paziente è in fase post-dimissione dopo un ricovero per EMBOLIA POLMONARE ESTESA.
-    OBIETTIVO: Analizza i dati recenti per stabilità.
-    DATI: {summary}
+    CONTESTO CLINICO: Il paziente è in fase post-dimissione dopo un ricovero per EMBOLIA POLMONARE ESTESA con sforzo grave sul ventricolo destro.
+    PAZIENTE: Alessio Casini
+    OBIETTIVO: Analizza i dati recenti (O2, BPM, pressione e note) per stabilità.
+    DATI:
+    {summary}
+    Fornisci un commento strutturato e professionale. Non usare emoji.
     """
+    
     try:
         response = client_ai.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "system", "content": "Sei un medico specialista."}, {"role": "user", "content": prompt_paziente}]
+            messages=[
+                {"role": "system", "content": "Sei un assistente medico specializzato in monitoraggio post-embolia polmonare."},
+                {"role": "user", "content": prompt_paziente}
+            ]
         )
         return response.choices[0].message.content
-    except Exception as e: return f"Errore: {e}"
-
-def get_ai_report_analysis(report_name, report_content):
-    """Analizza il contenuto testuale di un referto inserito dall'utente."""
-    if not client_ai: return "AI non configurata."
-    prompt = f"Referto: {report_name}\nContenuto: {report_content}\nAnalizza questo esame per un paziente post-embolia."
-    try:
-        response = client_ai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "system", "content": "Sei un medico che spiega referti."}, {"role": "user", "content": prompt}]
-        )
-        return response.choices[0].message.content
-    except Exception as e: return f"Errore: {e}"
+    except Exception as e:
+        return f"Errore API: {str(e)}"
 
 def export_pdf(df, ai_comment):
     pdf = FPDF()
@@ -87,17 +87,23 @@ def export_pdf(df, ai_comment):
     pdf.set_font("Arial", "B", 16)
     pdf.cell(0, 10, clean_text("Report Clinico - Monitoraggio Post-Embolia"), ln=True, align="C")
     pdf.ln(5)
+    
+    # Sezione IA
     pdf.set_fill_color(245, 245, 245)
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 10, " Analisi Assistente IA", ln=True, fill=True)
     pdf.set_font("Arial", "", 10)
+    # Pulizia del commento dell'IA prima di scriverlo
     pdf.multi_cell(0, 7, clean_text(ai_comment))
     pdf.ln(5)
+
+    # Tabella Dati
     pdf.set_fill_color(230, 240, 255)
     pdf.set_font("Arial", "B", 9)
     cols = [("Data Ora", 35), ("O2", 15), ("BPM", 15), ("T C", 15), ("Press", 25), ("Peso", 20), ("Note", 65)]
     for h, w in cols: pdf.cell(w, 10, h, 1, 0, "C", True)
     pdf.ln()
+    
     pdf.set_font("Arial", "", 8)
     for _, row in df.sort_values(by='created_at', ascending=False).head(50).iterrows():
         date_str = row['created_at'].strftime('%d/%m/%y %H:%M')
@@ -108,6 +114,7 @@ def export_pdf(df, ai_comment):
         p = f"{row.get('systolic','-')}/{row.get('diastolic','-')}"
         pdf.cell(25, 8, p, 1, 0, "C")
         pdf.cell(20, 8, str(row.get('weight','-')), 1, 0, "C")
+        # Pulizia anche per le note dell'utente
         pdf.cell(65, 8, clean_text(str(row.get('notes','-'))[:40]), 1)
         pdf.ln()
     return bytes(pdf.output())
@@ -116,13 +123,14 @@ def export_pdf(df, ai_comment):
 if supabase:
     res = supabase.table("health_logs").select("*").order("created_at").execute()
     df = pd.DataFrame(res.data) if res.data else pd.DataFrame()
+    
     if not df.empty:
         df['created_at'] = pd.to_datetime(df['created_at'], format='ISO8601', errors='coerce').dt.tz_localize(None)
         df = df.dropna(subset=['created_at'])
 
     st.title("🩺 Sanity Diary Intelligence")
 
-    # Banner Visite (Dal tuo file originale)
+    # Banner Visite
     try:
         res_v = supabase.table("visite_mediche").select("*").eq("completata", False).order("data_visita").execute()
         if res_v.data:
@@ -136,6 +144,7 @@ if supabase:
         def get_delta(col):
             vals = df[col].dropna()
             return round(float(vals.iloc[-1] - vals.iloc[-2]), 1) if len(vals) >= 2 else None
+
         m[0].metric("Ossigeno", f"{df['oxygen'].iloc[-1]}%", get_delta('oxygen'))
         m[1].metric("BPM", f"{df['bpm'].iloc[-1]}", get_delta('bpm'), delta_color="inverse")
         m[2].metric("Press. Max", f"{df['systolic'].iloc[-1]}", get_delta('systolic'), delta_color="inverse")
@@ -145,10 +154,86 @@ if supabase:
         tabs = st.tabs(["📈 Trend", "🧬 Pearson", "🤖 Assistente IA", "📅 Visite", "📂 Referti", "📋 Registro"])
 
         with tabs[0]:
+            st.subheader("Andamento Temporale")
             all_params = ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature']
-            st.plotly_chart(px.line(df.sort_values('created_at'), x='created_at', y=[c for c in all_params if c in df.columns], markers=True, template="plotly_white"), use_container_width=True)
+            available_cols = [c for c in all_params if c in df.columns]
+            df_plot = df.sort_values('created_at')
+            st.plotly_chart(px.line(df_plot, x='created_at', y=available_cols, markers=True, template="plotly_white"), use_container_width=True)
 
         with tabs[1]:
             st.subheader("🧬 Studio Correlazioni (Pearson)")
-            if not df.empty:
-                st.plotly_chart(px.imshow(df[[c for c in all_params if c in df.columns]].corr(), text_auto=".2f",
+            c_desc, c_map = st.columns([1, 2])
+            with c_desc:
+                st.markdown("**Legenda:**\n* **1.0**: Correlazione forte positiva.\n* **-1.0**: Correlazione forte negativa.\n* **0**: Nessuna relazione.")
+                if len(available_cols) > 1:
+                    c_mat = df[available_cols].corr()
+                    strong = c_mat.unstack().sort_values(ascending=False)
+                    top = strong[strong < 0.95].head(1)
+                    if not top.empty:
+                        st.info(f"💡 Legame: {top.index[0][0]} e {top.index[0][1]} ({top.values[0]:.2f})")
+            with c_map:
+                if len(available_cols) > 1:
+                    st.plotly_chart(px.imshow(df[available_cols].corr(), text_auto=".2f", color_continuous_scale='RdBu_r'), use_container_width=True)
+
+        with tabs[2]:
+            st.subheader("🤖 Analisi Specialistica IA")
+            st.info("Quadro Clinico: Monitoraggio Post-Embolia Polmonare Estesa.")
+            if st.button("Esegui Analisi"):
+                with st.spinner("L'IA sta studiando i dati..."):
+                    st.session_state.ai_text = get_ai_narrative_analysis(df)
+            
+            res_ai = st.session_state.get("ai_text", "")
+            if res_ai:
+                st.markdown(res_ai)
+            else:
+                st.write("Genera l'analisi per visualizzare il commento.")
+
+        with tabs[3]:
+            st.subheader("Appuntamenti Medici")
+            cv1, cv2 = st.columns([1, 2])
+            with cv1:
+                with st.form("vis"):
+                    nv, dv, lv = st.text_input("Visita"), st.date_input("Data"), st.text_input("Luogo")
+                    if st.form_submit_button("Aggiungi"):
+                        supabase.table("visite_mediche").insert({"nome_visita":nv, "data_visita":str(dv), "luogo":lv, "completata":False}).execute()
+                        st.rerun()
+            with cv2:
+                for v in (supabase.table("visite_mediche").select("*").order("data_visita").execute().data or []):
+                    ca, cb = st.columns([4, 1])
+                    ca.write(f"{'✅' if v['completata'] else '⏳'} **{v['data_visita']}**: {v['nome_visita']} ({v['luogo']})")
+                    if not v['completata'] and cb.button("Fatto", key=f"v_{v['id']}"):
+                        supabase.table("visite_mediche").update({"completata":True}).eq("id", v['id']).execute()
+                        st.rerun()
+
+        with tabs[4]:
+            st.subheader("Archivio Documenti")
+            up = st.file_uploader("Carica Referto PDF", type="pdf")
+            if st.button("Salva PDF") and up:
+                b64 = base64.b64encode(up.read()).decode('utf-8')
+                supabase.table("referti_medici").insert({"nome_referto":up.name, "data_esame":str(datetime.now().date()), "file_path":b64}).execute()
+                st.rerun()
+            for r in (supabase.table("referti_medici").select("*").execute().data or []):
+                st.download_button(f"📄 {r['nome_referto']}", base64.b64decode(r['file_path']), file_name=r['nome_referto'], key=f"r_{r['id']}")
+
+        with tabs[5]:
+            st.subheader("Registro Storico")
+            df_display = df.sort_values(by='created_at', ascending=False).copy()
+            df_display['Data'] = df_display['created_at'].dt.strftime('%d/%m/%Y %H:%M')
+            # Creazione PDF sicura
+            pdf_report = export_pdf(df, st.session_state.get("ai_text", "Nessuna analisi generata."))
+            st.download_button("Scarica Report PDF per il Medico", pdf_report, "report_clinico.pdf", "application/pdf")
+            st.dataframe(df_display[['Data', 'oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature', 'notes']], use_container_width=True, hide_index=True)
+
+    with st.sidebar:
+        st.header("⚙️ Nuova Misura")
+        with st.form("h", clear_on_submit=True):
+            o, b = st.number_input("O2%", 0), st.number_input("BPM", 0)
+            s, d = st.number_input("Sist.", 0), st.number_input("Diast.", 0)
+            w, t = st.number_input("Peso", 0.0), st.number_input("Temp", 0.0)
+            n = st.text_area("Note")
+            if st.form_submit_button("Salva"):
+                supabase.table("health_logs").insert({"oxygen":o, "bpm":b, "systolic":s, "diastolic":d, "weight":w, "temperature":t, "notes":n}).execute()
+                st.rerun()
+        if st.button("Logout"):
+            st.session_state.authenticated = False
+            st.rerun()
