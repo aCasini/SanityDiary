@@ -53,51 +53,64 @@ def clean_text(text):
 
 def get_ai_narrative_analysis(df):
     if not client_ai: return "Chiave API non configurata."
-    if df.empty or len(df) < 2: return "Dati insufficienti."
+    if df.empty or len(df) < 2: return "Dati insufficienti per l'analisi."
     recent = df.sort_values(by='created_at', ascending=False).head(10)
     summary = recent.to_string(columns=['created_at', 'oxygen', 'bpm', 'systolic', 'diastolic', 'notes', 'temperature'])
-    prompt = f"Paziente: Alessio Casini. Post-Embolia Polmonare Estesa. Analizza questi parametri: {summary}"
-    try:
-        response = client_ai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "system", "content": "Sei un cardiologo esperto."}, {"role": "user", "content": prompt}]
-        )
-        return response.choices[0].message.content
-    except Exception as e: return f"Errore: {e}"
-
-# FUNZIONE AGGIORNATA: Analisi basata sul TESTO del referto
-def analyze_report_text(doc_name, doc_content):
-    if not client_ai: return "AI non configurata."
-    if not doc_content or len(doc_content) < 5:
-        return "⚠️ Per favore, inserisci i dati principali o il testo del referto nel campo 'Note' per permettermi di analizzarlo."
-    
-    prompt = f"""
-    REFERTO: {doc_name}
-    CONTENUTO/VALORI: {doc_content}
-    
-    CONTESTO PAZIENTE: Alessio Casini, monitoraggio post-embolia polmonare estesa (ventricolo destro affaticato).
-    COMPITO: Spiega il significato di questi risultati nel contesto clinico del paziente. Sii sintetico e professionale.
+    prompt_paziente = f"""
+    CONTESTO CLINICO: Il paziente è in fase post-dimissione dopo un ricovero per EMBOLIA POLMONARE ESTESA.
+    OBIETTIVO: Analizza i dati recenti per stabilità.
+    DATI: {summary}
     """
     try:
         response = client_ai.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "Sei un medico specialista che aiuta il paziente a capire i propri esami."},
-                {"role": "user", "content": prompt}
-            ]
+            messages=[{"role": "system", "content": "Sei un medico specialista."}, {"role": "user", "content": prompt_paziente}]
+        )
+        return response.choices[0].message.content
+    except Exception as e: return f"Errore: {e}"
+
+def get_ai_report_analysis(report_name, report_content):
+    """Analizza il contenuto testuale di un referto inserito dall'utente."""
+    if not client_ai: return "AI non configurata."
+    prompt = f"Referto: {report_name}\nContenuto: {report_content}\nAnalizza questo esame per un paziente post-embolia."
+    try:
+        response = client_ai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": "Sei un medico che spiega referti."}, {"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content
     except Exception as e: return f"Errore: {e}"
 
 def export_pdf(df, ai_comment):
     pdf = FPDF()
-    pdf.add_page(); pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, clean_text("Report Clinico - Sanity Diary"), ln=True, align="C")
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, clean_text("Report Clinico - Monitoraggio Post-Embolia"), ln=True, align="C")
     pdf.ln(5)
-    pdf.set_fill_color(245, 245, 245); pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, " Analisi IA", ln=True, fill=True)
-    pdf.set_font("Arial", "", 10); pdf.multi_cell(0, 7, clean_text(ai_comment))
-    pdf.ln(5); return bytes(pdf.output())
+    pdf.set_fill_color(245, 245, 245)
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0, 10, " Analisi Assistente IA", ln=True, fill=True)
+    pdf.set_font("Arial", "", 10)
+    pdf.multi_cell(0, 7, clean_text(ai_comment))
+    pdf.ln(5)
+    pdf.set_fill_color(230, 240, 255)
+    pdf.set_font("Arial", "B", 9)
+    cols = [("Data Ora", 35), ("O2", 15), ("BPM", 15), ("T C", 15), ("Press", 25), ("Peso", 20), ("Note", 65)]
+    for h, w in cols: pdf.cell(w, 10, h, 1, 0, "C", True)
+    pdf.ln()
+    pdf.set_font("Arial", "", 8)
+    for _, row in df.sort_values(by='created_at', ascending=False).head(50).iterrows():
+        date_str = row['created_at'].strftime('%d/%m/%y %H:%M')
+        pdf.cell(35, 8, date_str, 1)
+        pdf.cell(15, 8, str(row.get('oxygen','-')), 1, 0, "C")
+        pdf.cell(15, 8, str(row.get('bpm','-')), 1, 0, "C")
+        pdf.cell(15, 8, str(row.get('temperature','-')), 1, 0, "C")
+        p = f"{row.get('systolic','-')}/{row.get('diastolic','-')}"
+        pdf.cell(25, 8, p, 1, 0, "C")
+        pdf.cell(20, 8, str(row.get('weight','-')), 1, 0, "C")
+        pdf.cell(65, 8, clean_text(str(row.get('notes','-'))[:40]), 1)
+        pdf.ln()
+    return bytes(pdf.output())
 
 # --- 5. LOGICA APPLICATIVA ---
 if supabase:
@@ -105,73 +118,37 @@ if supabase:
     df = pd.DataFrame(res.data) if res.data else pd.DataFrame()
     if not df.empty:
         df['created_at'] = pd.to_datetime(df['created_at'], format='ISO8601', errors='coerce').dt.tz_localize(None)
+        df = df.dropna(subset=['created_at'])
 
     st.title("🩺 Sanity Diary Intelligence")
 
-    # Banner Visite
+    # Banner Visite (Dal tuo file originale)
     try:
         res_v = supabase.table("visite_mediche").select("*").eq("completata", False).order("data_visita").execute()
         if res_v.data:
             v = res_v.data[0]
-            st.warning(f"📅 **Prossima Visita:** {v['nome_visita']} il {v['data_visita']}")
+            st.warning(f"📅 **Prossima Visita:** {v['nome_visita']} il {v['data_visita']} ({v['luogo']})")
     except: pass
 
     if not df.empty:
+        # Metriche
+        m = st.columns(4)
+        def get_delta(col):
+            vals = df[col].dropna()
+            return round(float(vals.iloc[-1] - vals.iloc[-2]), 1) if len(vals) >= 2 else None
+        m[0].metric("Ossigeno", f"{df['oxygen'].iloc[-1]}%", get_delta('oxygen'))
+        m[1].metric("BPM", f"{df['bpm'].iloc[-1]}", get_delta('bpm'), delta_color="inverse")
+        m[2].metric("Press. Max", f"{df['systolic'].iloc[-1]}", get_delta('systolic'), delta_color="inverse")
+        m[3].metric("Peso", f"{df['weight'].iloc[-1]}kg", get_delta('weight'))
+
+        st.divider()
         tabs = st.tabs(["📈 Trend", "🧬 Pearson", "🤖 Assistente IA", "📅 Visite", "📂 Referti", "📋 Registro"])
 
-        with tabs[2]:
-            st.subheader("🤖 Analisi Generale Trend")
-            if st.button("Analizza Parametri Vitali"):
-                st.session_state.ai_text = get_ai_narrative_analysis(df)
-            if "ai_text" in st.session_state: st.info(st.session_state.ai_text)
+        with tabs[0]:
+            all_params = ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature']
+            st.plotly_chart(px.line(df.sort_values('created_at'), x='created_at', y=[c for c in all_params if c in df.columns], markers=True, template="plotly_white"), use_container_width=True)
 
-        with tabs[4]:
-            st.subheader("📂 Archivio & Analisi Referti")
-            
-            with st.expander("➕ Carica ed Esponi Risultati"):
-                up = st.file_uploader("Allega PDF", type="pdf")
-                content_txt = st.text_area("Copia qui il testo del referto o i valori chiave (es. D-Dimero 250, Troponina ok...)", height=150)
-                if st.button("Salva nel Diario") and up:
-                    b64 = base64.b64encode(up.read()).decode('utf-8')
-                    supabase.table("referti_medici").insert({
-                        "nome_referto": up.name, 
-                        "data_esame": str(datetime.now().date()), 
-                        "file_path": b64,
-                        "note": content_txt # Salviamo il testo per l'IA
-                    }).execute()
-                    st.success("Referto salvato!"); st.rerun()
-
-            # Elenco Referti
-            res_r = supabase.table("referti_medici").select("*").order("data_esame", desc=True).execute()
-            for r in (res_r.data or []):
-                with st.expander(f"📄 {r['data_esame']} - {r['nome_referto']}"):
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        st.download_button("💾 Scarica", base64.b64decode(r['file_path']), file_name=r['nome_referto'], key=f"r_{r['id']}")
-                        pdf_view = f'<iframe src="data:application/pdf;base64,{r["file_path"]}" width="100%" height="300" type="application/pdf"></iframe>'
-                        st.markdown(pdf_view, unsafe_allow_html=True)
-                    with c2:
-                        st.write("**🤖 Chiedi all'IA di questo esame:**")
-                        if st.button(f"Analizza Dati Esame", key=f"ai_btn_{r['id']}"):
-                            # Passiamo all'IA il testo salvato nel campo note
-                            st.session_state[f"res_{r['id']}"] = analyze_report_text(r['nome_referto'], r.get('note', ''))
-                        
-                        if f"res_{r['id']}" in st.session_state:
-                            st.markdown(st.session_state[f"res_{r['id']}"])
-
-        with tabs[5]:
-            # Registro (Invariato per evitare regressioni)
-            st.subheader("Registro Storico")
-            pdf_report = export_pdf(df, st.session_state.get("ai_text", "Nessuna analisi generale."))
-            st.download_button("Scarica Report PDF", pdf_report, "report.pdf", "application/pdf")
-            st.dataframe(df.sort_values(by='created_at', ascending=False), use_container_width=True)
-
-    # Sidebar per inserimento dati
-    with st.sidebar:
-        st.header("⚙️ Nuova Misura")
-        with st.form("h", clear_on_submit=True):
-            o, b, s, d, w, t = st.number_input("O2%", 0), st.number_input("BPM", 0), st.number_input("Sist.", 0), st.number_input("Diast.", 0), st.number_input("Peso", 0.0), st.number_input("Temp", 0.0)
-            n = st.text_area("Note")
-            if st.form_submit_button("Salva"):
-                supabase.table("health_logs").insert({"oxygen":o, "bpm":b, "systolic":s, "diastolic":d, "weight":w, "temperature":t, "notes":n}).execute()
-                st.rerun()
+        with tabs[1]:
+            st.subheader("🧬 Studio Correlazioni (Pearson)")
+            if not df.empty:
+                st.plotly_chart(px.imshow(df[[c for c in all_params if c in df.columns]].corr(), text_auto=".2f",
