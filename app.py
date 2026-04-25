@@ -46,7 +46,7 @@ try:
 except:
     client_ai = None
 
-# --- 4. FUNZIONI UTILITY (RIPRISTINATE INTEGRALMENTE) ---
+# --- 4. FUNZIONI UTILITY ---
 def clean_text(text):
     if not text: return ""
     return text.encode('latin-1', 'replace').decode('latin-1').replace('?', ' ')
@@ -148,8 +148,9 @@ if supabase:
             with c_desc:
                 st.markdown("**Legenda:**\n* **1.0**: Correlazione forte positiva.\n* **-1.0**: Correlazione forte negativa.")
                 if len(available_cols) > 1:
+                    # FIX: Rimossa dipendenza matplotlib (style.background_gradient)
                     c_mat = df[available_cols].corr()
-                    st.dataframe(c_mat.style.background_gradient(cmap='RdBu_r'), use_container_width=True)
+                    st.dataframe(c_mat, use_container_width=True)
             with c_map:
                 if len(available_cols) > 1:
                     st.plotly_chart(px.imshow(df[available_cols].corr(), text_auto=".2f", color_continuous_scale='RdBu_r'), use_container_width=True)
@@ -157,12 +158,11 @@ if supabase:
         with tabs[2]:
             st.subheader("🤖 Analisi Specialistica IA")
             if st.button("Esegui Analisi"):
-                with st.spinner("L'IA sta studiando i dati clinici..."):
+                with st.spinner("Analizzando..."):
                     st.session_state.ai_text = get_ai_narrative_analysis(df)
             if "ai_text" in st.session_state: st.markdown(st.session_state.ai_text)
 
         with tabs[3]:
-            # Visite Mediche
             v_data = supabase.table("visite_mediche").select("*").order("data_visita").execute().data or []
             for v in v_data:
                 st.write(f"{'✅' if v['completata'] else '⏳'} **{v['data_visita']}**: {v['nome_visita']}")
@@ -181,7 +181,6 @@ if supabase:
 
             res_r = supabase.table("referti_medici").select("*").order("data_esame", desc=True).execute()
             for r in (res_r.data or []):
-                # UX Migliorata: Preview raggruppata per riga
                 with st.expander(f"📄 {r['data_esame']} - {r['nome_referto']}"):
                     f_bytes = base64.b64decode(r['file_path'])
                     st.download_button("💾 Scarica PDF", f_bytes, file_name=f"{r['nome_referto']}.pdf", key=f"d_{r['id']}")
@@ -192,12 +191,8 @@ if supabase:
             st.subheader("Registro Storico")
             df_display = df.sort_values(by='created_at', ascending=False).copy()
             df_display['Data'] = df_display['created_at'].dt.strftime('%d/%m/%Y %H:%M')
-            
-            # Report PDF con AI
             pdf_report = export_pdf(df, st.session_state.get("ai_text", "Nessuna analisi generata."))
             st.download_button("Scarica Report PDF per il Medico", pdf_report, "report_clinico.pdf", "application/pdf")
-            
-            # Visualizzazione colonne completa
             cols_to_show = ['Data', 'oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature', 'notes']
             st.dataframe(df_display[[c for c in cols_to_show if c in df_display.columns]], use_container_width=True, hide_index=True)
 
