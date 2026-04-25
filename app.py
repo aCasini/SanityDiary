@@ -46,7 +46,7 @@ try:
 except:
     client_ai = None
 
-# --- 4. FUNZIONI UTILITY (PDF & AI) ---
+# --- 4. FUNZIONI UTILITY (PDF & AI CON CONTESTO CLINICO) ---
 def clean_text(text):
     if not text: return ""
     return text.encode('latin-1', 'replace').decode('latin-1').replace('?', ' ')
@@ -54,16 +54,30 @@ def clean_text(text):
 def get_ai_narrative_analysis(df):
     if not client_ai: return "Chiave API non configurata."
     if df.empty or len(df) < 2: return "Dati insufficienti per l'analisi."
+    
     recent = df.sort_values(by='created_at', ascending=False).head(10)
     summary = recent.to_string(columns=['created_at', 'oxygen', 'bpm', 'systolic', 'diastolic', 'notes', 'temperature'])
-    prompt = f"Contesto: Post-Embolia Polmonare. Analizza questi dati per il medico: {summary}"
+    
+    # RE-INSERITO CONTESTO CLINICO SPECIFICO
+    prompt_paziente = f"""
+    CONTESTO CLINICO: Il paziente è in fase post-dimissione dopo un ricovero per EMBOLIA POLMONARE ESTESA.
+    OBIETTIVO: Analizza i dati recenti (O2, BPM, pressione e note) per stabilità emodinamica e respiratoria.
+    DATI RECENTI:
+    {summary}
+    Fornisci un commento strutturato, asciutto e professionale per il medico curante. Non usare emoji.
+    """
+    
     try:
         response = client_ai.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "system", "content": "Sei un medico specialista."}, {"role": "user", "content": prompt}]
+            messages=[
+                {"role": "system", "content": "Sei un assistente medico specializzato in monitoraggio post-embolia polmonare e cardiologia."},
+                {"role": "user", "content": prompt_paziente}
+            ]
         )
         return response.choices[0].message.content
-    except Exception as e: return f"Errore: {e}"
+    except Exception as e:
+        return f"Errore API: {str(e)}"
 
 def export_pdf(df, ai_comment):
     pdf = FPDF()
@@ -74,7 +88,7 @@ def export_pdf(df, ai_comment):
     
     pdf.set_fill_color(245, 245, 245)
     pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, " Analisi Assistente IA", ln=True, fill=True)
+    pdf.cell(0, 10, " Analisi Assistente IA (Focus Post-Embolia)", ln=True, fill=True)
     pdf.set_font("Arial", "", 10)
     pdf.multi_cell(0, 7, clean_text(ai_comment))
     pdf.ln(5)
@@ -145,10 +159,12 @@ if supabase:
                     st.plotly_chart(px.imshow(df[available_cols].corr(), text_auto=".2f", color_continuous_scale='RdBu_r'), use_container_width=True)
 
         with tabs[2]:
+            st.subheader("🤖 Analisi Specialistica IA")
+            st.info("Quadro Clinico: Monitoraggio Post-Embolia Polmonare Estesa.")
             if st.button("Esegui Analisi"):
-                with st.spinner("Analizzando..."):
+                with st.spinner("L'IA sta studiando i dati clinici..."):
                     st.session_state.ai_text = get_ai_narrative_analysis(df)
-            if "ai_text" in st.session_state: st.info(st.session_state.ai_text)
+            if "ai_text" in st.session_state: st.markdown(st.session_state.ai_text)
 
         with tabs[4]:
             st.subheader("📂 Archivio Documenti")
