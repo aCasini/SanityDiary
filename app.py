@@ -8,7 +8,7 @@ from fpdf import FPDF
 import streamlit.components.v1 as components
 from openai import OpenAI
 
-# --- 1. CONFIGURAZIONE PAGINA & PWA ---
+# --- 1. CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Sanity Diary AI", page_icon="🧬", layout="wide")
 
 def inject_pwa():
@@ -63,7 +63,7 @@ if supabase:
     st.title("🩺 Sanity Diary Intelligence")
 
     if not df.empty:
-        # Metriche compatte
+        # Metriche
         m = st.columns(4)
         def get_delta(col):
             vals = df[col].dropna()
@@ -83,24 +83,33 @@ if supabase:
         with tabs[4]:
             st.subheader("📂 Archivio Documenti")
             
+            # Form Caricamento (Corretto: il bottone è dentro il with)
             with st.expander("➕ Carica nuovo referto"):
-                up = st.file_uploader("Seleziona PDF", type="pdf")
-                nome_ref = st.text_input("Titolo referto")
-                if st.form_submit_button("Salva") and up:
-                    b64 = base64.b64encode(up.read()).decode('utf-8')
-                    supabase.table("referti_medici").insert({"nome_referto": nome_ref if nome_ref else up.name, "data_esame": str(datetime.now().date()), "file_path": b64}).execute()
-                    st.rerun()
+                with st.form("upload_referto", clear_on_submit=True):
+                    up = st.file_uploader("Seleziona PDF", type="pdf")
+                    nome_ref = st.text_input("Titolo referto")
+                    submit_upload = st.form_submit_button("Salva nel Database")
+                    
+                    if submit_upload and up:
+                        b64 = base64.b64encode(up.read()).decode('utf-8')
+                        supabase.table("referti_medici").insert({
+                            "nome_referto": nome_ref if nome_ref else up.name, 
+                            "data_esame": str(datetime.now().date()), 
+                            "file_path": b64
+                        }).execute()
+                        st.success("Referto salvato!")
+                        st.rerun()
 
-            st.write("") # Spaziatore
+            st.write("") 
             
-            # --- SEZIONE REFERTI COMPATTA ---
+            # Visualizzazione Compatta
             res_r = supabase.table("referti_medici").select("*").order("data_esame", desc=True).execute()
             referti = res_r.data if res_r.data else []
             
             if not referti:
                 st.info("Nessun referto presente.")
             else:
-                # Header della "tabella" manuale per risparmiare spazio
+                # Tabella manuale compatta
                 st.markdown("""<div style='display:flex; font-weight:bold; border-bottom:1px solid #ccc; padding-bottom:5px; margin-bottom:10px;'>
                     <div style='flex:3;'>Nome Referto</div>
                     <div style='flex:1;'>Data</div>
@@ -108,7 +117,6 @@ if supabase:
                 </div>""", unsafe_allow_html=True)
 
                 for r in referti:
-                    # Riga molto stretta
                     col_info, col_date, col_btns = st.columns([3, 1, 2])
                     
                     with col_info:
@@ -118,17 +126,15 @@ if supabase:
                         st.markdown(f"<span style='color:gray'>{r['data_esame']}</span>", unsafe_allow_html=True)
                     
                     with col_btns:
-                        # Layout orizzontale per i bottoni
-                        sub_c1, sub_c2 = st.columns(2)
-                        
+                        b_c1, b_c2 = st.columns(2)
                         # Download
-                        file_bytes = base64.b64decode(r['file_path'])
-                        sub_c1.download_button("💾", file_bytes, file_name=f"{r['nome_referto']}.pdf", key=f"dl_{r['id']}", help="Scarica PDF")
+                        f_bytes = base64.b64decode(r['file_path'])
+                        b_c1.download_button("💾", f_bytes, file_name=f"{r['nome_referto']}.pdf", key=f"dl_{r['id']}")
                         
-                        # Anteprima (Apre in una nuova tab per evitare il blocco Chrome)
-                        pdf_base64 = r['file_path']
-                        preview_link = f'<a href="data:application/pdf;base64,{pdf_base64}" target="_blank" style="text-decoration:none;"><button style="border-radius:5px; border:1px solid #ccc; padding:3px 10px; cursor:pointer;">👁️ Visualizza</button></a>'
-                        sub_c2.markdown(preview_link, unsafe_allow_html=True)
+                        # Link Anteprima (Nuova scheda)
+                        pdf_b64 = r['file_path']
+                        preview_html = f'<a href="data:application/pdf;base64,{pdf_b64}" target="_blank" style="text-decoration:none;"><button style="width:100%; border-radius:4px; border:1px solid #ccc; background:white; cursor:pointer; padding:2px;">👁️</button></a>'
+                        b_c2.markdown(preview_html, unsafe_allow_html=True)
                     
                     st.markdown("<hr style='margin:2px 0; border:0.1px solid #eee;'>", unsafe_allow_html=True)
 
@@ -138,7 +144,9 @@ if supabase:
     with st.sidebar:
         st.header("⚙️ Nuova Misura")
         with st.form("h", clear_on_submit=True):
-            o, b, s, d, w, t = st.number_input("O2%", 0), st.number_input("BPM", 0), st.number_input("Sist.", 0), st.number_input("Diast.", 0), st.number_input("Peso", 0.0), st.number_input("Temp", 0.0)
+            o, b = st.number_input("O2%", 0), st.number_input("BPM", 0)
+            s, d = st.number_input("Sist.", 0), st.number_input("Diast.", 0)
+            w, t = st.number_input("Peso", 0.0), st.number_input("Temp", 0.0)
             n = st.text_area("Note")
             if st.form_submit_button("Salva"):
                 supabase.table("health_logs").insert({"oxygen":o, "bpm":b, "systolic":s, "diastolic":d, "weight":w, "temperature":t, "notes":n}).execute()
