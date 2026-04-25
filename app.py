@@ -72,7 +72,6 @@ def export_pdf(df, ai_comment):
     pdf.cell(0, 10, clean_text("Report Clinico - Monitoraggio Post-Embolia"), ln=True, align="C")
     pdf.ln(5)
     
-    # Sezione IA
     pdf.set_fill_color(245, 245, 245)
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 10, " Analisi Assistente IA", ln=True, fill=True)
@@ -80,7 +79,6 @@ def export_pdf(df, ai_comment):
     pdf.multi_cell(0, 7, clean_text(ai_comment))
     pdf.ln(5)
 
-    # Tabella Dati
     pdf.set_fill_color(230, 240, 255)
     pdf.set_font("Arial", "B", 9)
     cols = [("Data Ora", 35), ("O2", 15), ("BPM", 15), ("T C", 15), ("Press", 25), ("Peso", 20), ("Note", 65)]
@@ -131,6 +129,21 @@ if supabase:
             available_cols = [c for c in all_params if c in df.columns]
             st.plotly_chart(px.line(df.sort_values('created_at'), x='created_at', y=available_cols, markers=True, template="plotly_white"), use_container_width=True)
 
+        with tabs[1]:
+            st.subheader("🧬 Studio Correlazioni (Pearson)")
+            c_desc, c_map = st.columns([1, 2])
+            with c_desc:
+                st.markdown("**Legenda:**\n* **1.0**: Correlazione forte positiva.\n* **-1.0**: Correlazione forte negativa.\n* **0**: Nessuna relazione.")
+                if len(available_cols) > 1:
+                    c_mat = df[available_cols].corr()
+                    strong = c_mat.unstack().sort_values(ascending=False)
+                    top = strong[strong < 0.95].head(1)
+                    if not top.empty:
+                        st.info(f"💡 Legame: {top.index[0][0]} e {top.index[0][1]} ({top.values[0]:.2f})")
+            with c_map:
+                if len(available_cols) > 1:
+                    st.plotly_chart(px.imshow(df[available_cols].corr(), text_auto=".2f", color_continuous_scale='RdBu_r'), use_container_width=True)
+
         with tabs[2]:
             if st.button("Esegui Analisi"):
                 with st.spinner("Analizzando..."):
@@ -161,12 +174,8 @@ if supabase:
             st.subheader("Registro Storico")
             df_display = df.sort_values(by='created_at', ascending=False).copy()
             df_display['Data'] = df_display['created_at'].dt.strftime('%d/%m/%Y %H:%M')
-            
-            # Re-integrazione pulsante PDF Report
             pdf_report = export_pdf(df, st.session_state.get("ai_text", "Nessuna analisi generata."))
             st.download_button("Scarica Report PDF per il Medico", pdf_report, "report_clinico.pdf", "application/pdf")
-            
-            # Visualizzazione colonne corretta (incluso notes)
             cols_to_show = ['Data', 'oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature', 'notes']
             st.dataframe(df_display[[c for c in cols_to_show if c in df_display.columns]], use_container_width=True, hide_index=True)
 
