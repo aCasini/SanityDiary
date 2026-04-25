@@ -50,6 +50,7 @@ except:
 def clean_text(text):
     """Rimuove caratteri speciali che mandano in crash FPDF."""
     if not text: return ""
+    # Sostituisce caratteri comuni o rimuove emoji/simboli non-latin1
     return text.encode('latin-1', 'replace').decode('latin-1').replace('?', ' ')
 
 def get_ai_narrative_analysis(df):
@@ -86,13 +87,16 @@ def export_pdf(df, ai_comment):
     pdf.cell(0, 10, clean_text("Report Clinico - Monitoraggio Post-Embolia"), ln=True, align="C")
     pdf.ln(5)
     
+    # Sezione IA
     pdf.set_fill_color(245, 245, 245)
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 10, " Analisi Assistente IA", ln=True, fill=True)
     pdf.set_font("Arial", "", 10)
+    # Pulizia del commento dell'IA prima di scriverlo
     pdf.multi_cell(0, 7, clean_text(ai_comment))
     pdf.ln(5)
 
+    # Tabella Dati
     pdf.set_fill_color(230, 240, 255)
     pdf.set_font("Arial", "B", 9)
     cols = [("Data Ora", 35), ("O2", 15), ("BPM", 15), ("T C", 15), ("Press", 25), ("Peso", 20), ("Note", 65)]
@@ -109,6 +113,7 @@ def export_pdf(df, ai_comment):
         p = f"{row.get('systolic','-')}/{row.get('diastolic','-')}"
         pdf.cell(25, 8, p, 1, 0, "C")
         pdf.cell(20, 8, str(row.get('weight','-')), 1, 0, "C")
+        # Pulizia anche per le note dell'utente
         pdf.cell(65, 8, clean_text(str(row.get('notes','-'))[:40]), 1)
         pdf.ln()
     return bytes(pdf.output())
@@ -156,16 +161,31 @@ if supabase:
 
         with tabs[1]:
             st.subheader("🧬 Studio Correlazioni (Pearson)")
-            if len(available_cols) > 1:
-                st.plotly_chart(px.imshow(df[available_cols].corr(), text_auto=".2f", color_continuous_scale='RdBu_r'), use_container_width=True)
+            c_desc, c_map = st.columns([1, 2])
+            with c_desc:
+                st.markdown("**Legenda:**\n* **1.0**: Correlazione forte positiva.\n* **-1.0**: Correlazione forte negativa.\n* **0**: Nessuna relazione.")
+                if len(available_cols) > 1:
+                    c_mat = df[available_cols].corr()
+                    strong = c_mat.unstack().sort_values(ascending=False)
+                    top = strong[strong < 0.95].head(1)
+                    if not top.empty:
+                        st.info(f"💡 Legame: {top.index[0][0]} e {top.index[0][1]} ({top.values[0]:.2f})")
+            with c_map:
+                if len(available_cols) > 1:
+                    st.plotly_chart(px.imshow(df[available_cols].corr(), text_auto=".2f", color_continuous_scale='RdBu_r'), use_container_width=True)
 
         with tabs[2]:
             st.subheader("🤖 Analisi Specialistica IA")
+            st.info("Quadro Clinico: Monitoraggio Post-Embolia Polmonare Estesa con grave sforzo su ventricolo destro.")
             if st.button("Esegui Analisi"):
                 with st.spinner("L'IA sta studiando i dati..."):
                     st.session_state.ai_text = get_ai_narrative_analysis(df)
+            
             res_ai = st.session_state.get("ai_text", "")
-            if res_ai: st.markdown(res_ai)
+            if res_ai:
+                st.markdown(res_ai)
+            else:
+                st.write("Genera l'analisi per visualizzare il commento.")
 
         with tabs[3]:
             st.subheader("Appuntamenti Medici")
@@ -177,10 +197,9 @@ if supabase:
                         supabase.table("visite_mediche").insert({"nome_visita":nv, "data_visita":str(dv), "luogo":lv, "completata":False}).execute()
                         st.rerun()
             with cv2:
-                v_data = supabase.table("visite_mediche").select("*").order("data_visita").execute().data or []
-                for v in v_data:
+                for v in (supabase.table("visite_mediche").select("*").order("data_visita").execute().data or []):
                     ca, cb = st.columns([4, 1])
-                    ca.write(f"{'✅' if v['completata'] else '⏳'} **{v['data_visita']}**: {v['nome_visita']}")
+                    ca.write(f"{'✅' if v['completata'] else '⏳'} **{v['data_visita']}**: {v['nome_visita']} ({v['luogo']})")
                     if not v['completata'] and cb.button("Fatto", key=f"v_{v['id']}"):
                         supabase.table("visite_mediche").update({"completata":True}).eq("id", v['id']).execute()
                         st.rerun()
@@ -199,14 +218,17 @@ if supabase:
             st.subheader("Registro Storico")
             df_display = df.sort_values(by='created_at', ascending=False).copy()
             df_display['Data'] = df_display['created_at'].dt.strftime('%d/%m/%Y %H:%M')
+            # Creazione PDF sicura
             pdf_report = export_pdf(df, st.session_state.get("ai_text", "Nessuna analisi generata."))
-            st.download_button("Scarica Report PDF", pdf_report, "report_clinico.pdf", "application/pdf")
+            st.download_button("Scarica Report PDF per il Medico", pdf_report, "report_clinico.pdf", "application/pdf")
             st.dataframe(df_display[['Data', 'oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature', 'notes']], use_container_width=True, hide_index=True)
 
     with st.sidebar:
         st.header("⚙️ Nuova Misura")
         with st.form("h", clear_on_submit=True):
-            o, b, s, d, w, t = st.number_input("O2%", 0), st.number_input("BPM", 0), st.number_input("Sist.", 0), st.number_input("Diast.", 0), st.number_input("Peso", 0.0), st.number_input("Temp", 0.0)
+            o, b = st.number_input("O2%", 0), st.number_input("BPM", 0)
+            s, d = st.number_input("Sist.", 0), st.number_input("Diast.", 0)
+            w, t = st.number_input("Peso", 0.0), st.number_input("Temp", 0.0)
             n = st.text_area("Note")
             if st.form_submit_button("Salva"):
                 supabase.table("health_logs").insert({"oxygen":o, "bpm":b, "systolic":s, "diastolic":d, "weight":w, "temperature":t, "notes":n}).execute()
