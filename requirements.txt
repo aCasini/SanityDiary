@@ -4,3 +4,4 @@ supabase
 plotly
 fpdf
 fpdf2
+openai
