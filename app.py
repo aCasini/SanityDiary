@@ -125,16 +125,24 @@ with st.sidebar:
         st.session_state.authenticated = False
         st.rerun()
 
-# RECUPERO DATI E FIX FORMATO ISO COMPLESSO
+# RECUPERO DATI
 res = supabase.table("health_logs").select("*").order("created_at").execute()
 df = pd.DataFrame(res.data) if res.data else pd.DataFrame()
 
 if not df.empty:
-    # Conversione universale: gestisce millisecondi e +00:00
     df['created_at'] = pd.to_datetime(df['created_at'], format='mixed', errors='coerce').dt.tz_localize(None)
     df = df.dropna(subset=['created_at']).sort_values('created_at')
 
 st.title("🩺 Sanity Diary Intelligence")
+
+# --- BANNER PROSSIMA VISITA (RIPRISTINATO) ---
+try:
+    v_res = supabase.table("visite_mediche").select("*").eq("completata", False).order("data_visita").execute()
+    if v_res.data:
+        v_next = v_res.data[0]
+        st.warning(f"📅 **Prossima Visita:** {v_next['nome_visita']} il {v_next['data_visita']} a {v_next['luogo']}")
+except Exception as e:
+    pass
 
 if not df.empty:
     # METRICHE DASHBOARD
@@ -150,11 +158,10 @@ if not df.empty:
 
     st.divider()
 
-    tabs = st.tabs(["📈 Trend", "🧬 Pearson", "🤖 Assistente IA", "📅 Visite", "📂 Referti", "📋 Registro"])
+    tabs = st.tabs(["📈 Trend", "🧬 Pearson", "🤖 Assistente IA", "📅 Visite", "📂 Referti (OCR)", "📋 Registro"])
 
     with tabs[0]:
         st.subheader("Andamento Completo")
-        # Inclusione di TUTTI i parametri richiesti nel grafico
         fig = px.line(df, x='created_at', y=['oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature'], 
                       markers=True, template="plotly_white")
         st.plotly_chart(fig, use_container_width=True)
@@ -181,21 +188,54 @@ if not df.empty:
         if "ai_text" in st.session_state:
             st.markdown(st.session_state.ai_text)
 
+    with tabs[3]:
+        st.subheader("📅 Gestione Appuntamenti")
+        v1, v2 = st.columns([1, 2])
+        with v1:
+            with st.form("add_visit"):
+                nv = st.text_input("Nome Visita")
+                dv = st.date_input("Data")
+                lv = st.text_input("Luogo")
+                if st.form_submit_button("Aggiungi Visita"):
+                    supabase.table("visite_mediche").insert({"nome_visita":nv, "data_visita":str(dv), "luogo":lv, "completata":False}).execute()
+                    st.rerun()
+        with v2:
+            st.write("**Visite in programma:**")
+            v_data = supabase.table("visite_mediche").select("*").order("data_visita").execute().data
+            for v in (v_data or []):
+                ca, cb = st.columns([4, 1])
+                status = "✅" if v['completata'] else "⏳"
+                ca.write(f"{status} **{v['data_visita']}**: {v['nome_visita']} ({v['luogo']})")
+                if not v['completata'] and cb.button("Fatto", key=f"v_{v['id']}"):
+                    supabase.table("visite_mediche").update({"completata":True}).eq("id", v['id']).execute()
+                    st.rerun()
+
     with tabs[4]:
-        st.subheader("📂 Gestione Documenti")
-        f_up = st.file_uploader("Carica PDF", type="pdf")
-        if f_up and st.button("Analizza"):
-            txt = extract_text_from_pdf(f_up)
-            st.session_state.rep_ai = get_ai_analysis(df, txt, is_report=True)
-            b64 = base64.b64encode(f_up.getvalue()).decode('utf-8')
-            supabase.table("referti_medici").insert({"nome_referto":f_up.name, "data_esame":str(datetime.now().date()), "file_path":b64, "note":txt}).execute()
+        st.subheader("📂 Archivio Referti & OCR")
+        f_up = st.file_uploader("Carica un referto PDF per l'analisi automatica", type="pdf")
+        if f_up and st.button("Analizza Referto"):
+            with st.spinner("Estrazione testo e analisi IA..."):
+                txt = extract_text_from_pdf(f_up)
+                st.session_state.rep_ai = get_ai_analysis(df, txt, is_report=True)
+                b64 = base64.b64encode(f_up.getvalue()).decode('utf-8')
+                supabase.table("referti_medici").insert({"nome_referto":f_up.name, "data_esame":str(datetime.now().date()), "file_path":b64, "note":txt}).execute()
+                st.rerun()
+        
         if "rep_ai" in st.session_state:
             st.info(st.session_state.rep_ai)
+            
+        st.divider()
+        st.write("**Documenti Salvati:**")
+        docs = supabase.table("referti_medici").select("*").order("data_esame", desc=True).execute().data
+        for d in (docs or []):
+            with st.expander(f"📄 {d['data_esame']} - {d['nome_referto']}"):
+                st.download_button("Scarica", base64.b64decode(d['file_path']), file_name=d['nome_referto'], key=f"dl_{d['id']}")
+                if d.get('note'): st.caption(f"Contenuto estratto: {d['note'][:200]}...")
 
     with tabs[5]:
-        st.subheader("Registro Storico")
-        pdf_rep = export_pdf(df, st.session_state.get("ai_text", "Generare analisi."))
-        st.download_button("Scarica Report", pdf_rep, "report.pdf", "application/pdf")
+        st.subheader("📋 Registro Storico")
+        pdf_rep = export_pdf(df, st.session_state.get("ai_text", "Generare analisi specialistica."))
+        st.download_button("📥 Scarica Report Completo (PDF)", pdf_rep, "report_clinico.pdf", "application/pdf")
         st.dataframe(df.sort_values('created_at', ascending=False), use_container_width=True)
 else:
-    st.info("Nessun dato presente. Inserisci una misura nella sidebar.")
+    st.info("Benvenuto! Inserisci la tua prima misura nella sidebar per sbloccare i grafici e le analisi.")
