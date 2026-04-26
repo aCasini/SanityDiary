@@ -53,7 +53,7 @@ try:
 except:
     client_ai = None
 
-# --- 4. FUNZIONI CORE (IA, PDF, OCR) ---
+# --- 4. FUNZIONI CORE ---
 def clean_text(text):
     if not text: return ""
     return text.encode('latin-1', 'replace').decode('latin-1').replace('?', ' ')
@@ -71,7 +71,7 @@ def get_ai_analysis(df, context="", is_report=False):
         prompt = f"Analizza questo referto per Alessio Casini (post-embolia):\n{context}"
     else:
         recent = df.sort_values(by='created_at', ascending=False).head(10)
-        summary = recent.to_string(columns=['created_at', 'oxygen', 'bpm', 'systolic', 'diastolic', 'notes'])
+        summary = recent.to_string(columns=['created_at', 'oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature', 'notes'])
         prompt = f"Paziente: Alessio Casini (Post-Embolia). Analisi dati:\n{summary}\nContesto extra: {context}"
     try:
         response = client_ai.chat.completions.create(
@@ -95,23 +95,22 @@ def export_pdf(df, ai_comment):
     pdf.ln(10)
     pdf.set_fill_color(230, 240, 255)
     pdf.set_font("Arial", "B", 8)
-    cols = [("Data Ora", 35), ("O2", 15), ("BPM", 15), ("T C", 15), ("Press", 25), ("Peso", 20), ("Note", 65)]
+    cols = [("Data Ora", 35), ("O2", 12), ("BPM", 12), ("T C", 12), ("Press", 20), ("Peso", 15), ("Note", 80)]
     for h, w in cols: pdf.cell(w, 10, h, 1, 0, "C", True)
     pdf.ln()
     pdf.set_font("Arial", "", 8)
-    for _, r in df.sort_values(by='created_at', ascending=False).head(50).iterrows():
+    for _, r in df.sort_values(by='created_at', ascending=False).iterrows():
         pdf.cell(35, 8, r['created_at'].strftime('%d/%m/%y %H:%M'), 1)
-        pdf.cell(15, 8, str(r.get('oxygen','-')), 1, 0, "C")
-        pdf.cell(15, 8, str(r.get('bpm','-')), 1, 0, "C")
-        pdf.cell(15, 8, str(r.get('temperature','-')), 1, 0, "C")
-        pdf.cell(25, 8, f"{r.get('systolic','-')}/{r.get('diastolic','-')}", 1, 0, "C")
-        pdf.cell(20, 8, str(r.get('weight','-')), 1, 0, "C")
-        pdf.cell(65, 8, clean_text(str(r.get('notes',''))[:40]), 1)
+        pdf.cell(12, 8, str(r.get('oxygen','-')), 1, 0, "C")
+        pdf.cell(12, 8, str(r.get('bpm','-')), 1, 0, "C")
+        pdf.cell(12, 8, str(r.get('temperature','-')), 1, 0, "C")
+        pdf.cell(20, 8, f"{r.get('systolic','-')}/{r.get('diastolic','-')}", 1, 0, "C")
+        pdf.cell(15, 8, str(r.get('weight','-')), 1, 0, "C")
+        pdf.cell(80, 8, clean_text(str(r.get('notes',''))[:50]), 1)
         pdf.ln()
     return pdf.output(dest='S').encode('latin-1')
 
 # --- 5. GESTIONE DATI ---
-# Sidebar sempre presente
 with st.sidebar:
     st.header("⚙️ Nuova Misura")
     with st.form("h", clear_on_submit=True):
@@ -126,27 +125,19 @@ with st.sidebar:
         st.session_state.authenticated = False
         st.rerun()
 
-# Recupero e pulizia dati (FIX DATE)
+# RECUPERO DATI E FIX FORMATO ISO COMPLESSO
 res = supabase.table("health_logs").select("*").order("created_at").execute()
 df = pd.DataFrame(res.data) if res.data else pd.DataFrame()
 
 if not df.empty:
-    df['created_at'] = pd.to_datetime(df['created_at'], errors='coerce')
-    df = df.dropna(subset=['created_at']).copy()
-    df['created_at'] = df['created_at'].dt.tz_localize(None)
+    # Conversione universale: gestisce millisecondi e +00:00
+    df['created_at'] = pd.to_datetime(df['created_at'], format='mixed', errors='coerce').dt.tz_localize(None)
+    df = df.dropna(subset=['created_at']).sort_values('created_at')
 
 st.title("🩺 Sanity Diary Intelligence")
 
-# Banner Visite
-try:
-    v_res = supabase.table("visite_mediche").select("*").eq("completata", False).order("data_visita").execute()
-    if v_res.data:
-        v = v_res.data[0]
-        st.warning(f"📅 **Prossima Visita:** {v['nome_visita']} il {v['data_visita']} a {v['luogo']}")
-except: pass
-
 if not df.empty:
-    # --- DASHBOARD METRICS (RIPRISTINATE) ---
+    # METRICHE DASHBOARD
     m = st.columns(4)
     def get_delta(col):
         v = df[col].dropna()
@@ -159,15 +150,19 @@ if not df.empty:
 
     st.divider()
 
-    tabs = st.tabs(["📈 Trend", "🧬 Pearson", "🤖 Assistente IA", "📅 Visite", "📂 Referti (OCR)", "📋 Registro"])
+    tabs = st.tabs(["📈 Trend", "🧬 Pearson", "🤖 Assistente IA", "📅 Visite", "📂 Referti", "📋 Registro"])
 
     with tabs[0]:
-        st.plotly_chart(px.line(df.sort_values('created_at'), x='created_at', y=['oxygen', 'bpm', 'systolic', 'diastolic'], markers=True, template="plotly_white"), use_container_width=True)
+        st.subheader("Andamento Completo")
+        # Inclusione di TUTTI i parametri richiesti nel grafico
+        fig = px.line(df, x='created_at', y=['oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature'], 
+                      markers=True, template="plotly_white")
+        st.plotly_chart(fig, use_container_width=True)
 
     with tabs[1]:
         st.subheader("🧬 Studio Correlazioni")
         c_desc, c_map = st.columns([1, 2])
-        stats_cols = [c for c in ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature'] if c in df.columns]
+        stats_cols = ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature']
         with c_desc:
             st.markdown("### 📊 Analisi Statistica")
             if len(df) > 2:
@@ -180,45 +175,27 @@ if not df.empty:
 
     with tabs[2]:
         st.subheader("🤖 Assistente IA")
-        extra_c = st.text_area("Aggiungi contesto clinico o sintomi:")
+        extra_c = st.text_area("Note aggiuntive per l'analisi:")
         if st.button("Esegui Analisi"):
-            with st.spinner("Analisi in corso..."):
-                st.session_state.ai_text = get_ai_analysis(df, extra_c)
+            st.session_state.ai_text = get_ai_analysis(df, extra_c)
         if "ai_text" in st.session_state:
             st.markdown(st.session_state.ai_text)
 
-    with tabs[3]:
-        st.subheader("Appuntamenti")
-        v1, v2 = st.columns([1, 2])
-        with v1:
-            with st.form("v_add"):
-                nv, dv, lv = st.text_input("Visita"), st.date_input("Data"), st.text_input("Luogo")
-                if st.form_submit_button("Aggiungi"):
-                    supabase.table("visite_mediche").insert({"nome_visita":nv, "data_visita":str(dv), "luogo":lv, "completata":False}).execute()
-                    st.rerun()
-        with v2:
-            for v in (supabase.table("visite_mediche").select("*").order("data_visita").execute().data or []):
-                ca, cb = st.columns([4, 1])
-                ca.write(f"{'✅' if v['completata'] else '⏳'} **{v['data_visita']}**: {v['nome_visita']}")
-                if not v['completata'] and cb.button("Fatto", key=f"v_{v['id']}"):
-                    supabase.table("visite_mediche").update({"completata":True}).eq("id", v['id']).execute()
-                    st.rerun()
-
     with tabs[4]:
-        st.subheader("📂 OCR Referti")
-        file_up = st.file_uploader("Carica PDF", type="pdf")
-        if file_up and st.button("Analizza"):
-            txt = extract_text_from_pdf(file_up)
+        st.subheader("📂 Gestione Documenti")
+        f_up = st.file_uploader("Carica PDF", type="pdf")
+        if f_up and st.button("Analizza"):
+            txt = extract_text_from_pdf(f_up)
             st.session_state.rep_ai = get_ai_analysis(df, txt, is_report=True)
-            b64 = base64.b64encode(file_up.getvalue()).decode('utf-8')
-            supabase.table("referti_medici").insert({"nome_referto":file_up.name, "data_esame":str(datetime.now().date()), "file_path":b64, "note":txt}).execute()
+            b64 = base64.b64encode(f_up.getvalue()).decode('utf-8')
+            supabase.table("referti_medici").insert({"nome_referto":f_up.name, "data_esame":str(datetime.now().date()), "file_path":b64, "note":txt}).execute()
         if "rep_ai" in st.session_state:
             st.info(st.session_state.rep_ai)
 
     with tabs[5]:
-        st.subheader("Registro")
-        pdf_rep = export_pdf(df, st.session_state.get("ai_text", "Nessuna analisi."))
-        st.download_button("Scarica Report PDF", pdf_rep, "report.pdf", "application/pdf")
+        st.subheader("Registro Storico")
+        pdf_rep = export_pdf(df, st.session_state.get("ai_text", "Generare analisi."))
+        st.download_button("Scarica Report", pdf_rep, "report.pdf", "application/pdf")
         st.dataframe(df.sort_values('created_at', ascending=False), use_container_width=True)
 else:
-    st.info("Inizia inserendo la prima misura nella sidebar ⬅️")
+    st.info("Nessun dato presente. Inserisci una misura nella sidebar.")
