@@ -108,14 +108,15 @@ def export_pdf(df, ai_comment):
     pdf.ln()
     
     pdf.set_font("Arial", "", 8)
-    for _, r in df.sort_values(by='created_at', ascending=False).head(40).iterrows():
-        pdf.cell(30, 7, r['created_at'].strftime('%d/%m/%y %H:%M'), 1)
-        pdf.cell(12, 7, str(r.get('oxygen','-')), 1, 0, "C")
-        pdf.cell(12, 7, str(r.get('bpm','-')), 1, 0, "C")
-        pdf.cell(20, 7, f"{r.get('systolic','-')}/{r.get('diastolic','-')}", 1, 0, "C")
-        pdf.cell(15, 7, str(r.get('weight','-')), 1, 0, "C")
-        pdf.cell(90, 7, clean_text(str(r.get('notes',''))[:55]), 1)
-        pdf.ln()
+    if not df.empty:
+        for _, r in df.sort_values(by='created_at', ascending=False).head(40).iterrows():
+            pdf.cell(30, 7, r['created_at'].strftime('%d/%m/%y %H:%M'), 1)
+            pdf.cell(12, 7, str(r.get('oxygen','-')), 1, 0, "C")
+            pdf.cell(12, 7, str(r.get('bpm','-')), 1, 0, "C")
+            pdf.cell(20, 7, f"{r.get('systolic','-')}/{r.get('diastolic','-')}", 1, 0, "C")
+            pdf.cell(15, 7, str(r.get('weight','-')), 1, 0, "C")
+            pdf.cell(90, 7, clean_text(str(r.get('notes',''))[:55]), 1)
+            pdf.ln()
     return pdf.output(dest='S').encode('latin-1')
 
 # --- 5. LOGICA UI ---
@@ -136,8 +137,12 @@ with st.sidebar:
 # Recupero Dati
 res = supabase.table("health_logs").select("*").order("created_at").execute()
 df = pd.DataFrame(res.data) if res.data else pd.DataFrame()
+
 if not df.empty:
-    df['created_at'] = pd.to_datetime(df['created_at']).dt.tz_localize(None)
+    # --- FIX DATE: Gestione errori di conversione e fusi orari ---
+    df['created_at'] = pd.to_datetime(df['created_at'], errors='coerce')
+    df = df.dropna(subset=['created_at']) # Rimuove righe con date non valide
+    df['created_at'] = df['created_at'].dt.tz_localize(None) # Rimuove fuso orario per compatibilità Plotly/FPDF
 
 st.title("🩺 Sanity Diary Intelligence")
 
@@ -163,8 +168,9 @@ if not df.empty:
             st.markdown("### 📊 Analisi Statistica")
             st.write("La mappa a destra mostra come i tuoi parametri variano insieme.")
             if len(df) > 2:
-                corr = df[cols_stats].corr().unstack().sort_values(ascending=False)
-                top = corr[corr < 0.99].head(1)
+                corr_matrix = df[cols_stats].corr()
+                corr_unstacked = corr_matrix.unstack().sort_values(ascending=False)
+                top = corr_unstacked[corr_unstacked < 0.99].head(1)
                 if not top.empty:
                     st.info(f"**Insight:** Trovata relazione tra {top.index[0][0]} e {top.index[0][1]} ({top.values[0]:.2f})")
         with col_map:
@@ -179,6 +185,26 @@ if not df.empty:
         if "ai_text" in st.session_state:
             st.markdown(st.session_state.ai_text)
 
+    with tabs[3]:
+        st.subheader("Appuntamenti Medici")
+        cv1, cv2 = st.columns([1, 2])
+        with cv1:
+            with st.form("vis"):
+                nv, dv, lv = st.text_input("Visita"), st.date_input("Data"), st.text_input("Luogo")
+                if st.form_submit_button("Aggiungi"):
+                    supabase.table("visite_mediche").insert({"nome_visita":nv, "data_visita":str(dv), "luogo":lv, "completata":False}).execute()
+                    st.rerun()
+        with cv2:
+            try:
+                visite = supabase.table("visite_mediche").select("*").order("data_visita").execute().data
+                for v in (visite or []):
+                    ca, cb = st.columns([4, 1])
+                    ca.write(f"{'✅' if v['completata'] else '⏳'} **{v['data_visita']}**: {v['nome_visita']}")
+                    if not v['completata'] and cb.button("Fatto", key=f"v_{v['id']}"):
+                        supabase.table("visite_mediche").update({"completata":True}).eq("id", v['id']).execute()
+                        st.rerun()
+            except: st.write("Nessuna visita salvata.")
+
     with tabs[4]:
         st.subheader("📂 Analisi Automatica Referti")
         file_up = st.file_uploader("Carica PDF per lettura OCR", type="pdf")
@@ -186,7 +212,6 @@ if not df.empty:
             with st.spinner("Lettura in corso..."):
                 txt = extract_text_from_pdf(file_up)
                 st.session_state.report_analysis = get_ai_analysis(df, txt, is_report=True)
-                # Salvataggio
                 b64 = base64.b64encode(file_up.getvalue()).decode('utf-8')
                 supabase.table("referti_medici").insert({"nome_referto":file_up.name, "data_esame":str(datetime.now().date()), "file_path":b64, "note":txt}).execute()
         if "report_analysis" in st.session_state:
@@ -198,4 +223,4 @@ if not df.empty:
         st.download_button("📥 Scarica Report PDF", pdf_out, "report_clinico.pdf", "application/pdf")
         st.dataframe(df.sort_values('created_at', ascending=False), use_container_width=True)
 else:
-    st.info("Inserisci la prima misura per iniziare.")
+    st.info("Benvenuto Alessio! Inserisci la tua prima misurazione nel pannello laterale per iniziare.")
