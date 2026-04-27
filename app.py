@@ -112,6 +112,52 @@ def get_ai_vision_analysis(base64_image):
         return f"Errore Vision: {e}"
 
 def get_ai_analysis(df, profile, context="", is_report=False):
+    # 1. Recupero dati numerici recenti
+    recent = df.sort_values(by='created_at', ascending=False).head(12)
+    data_summary = recent.to_string(columns=['created_at', 'oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature', 'notes'])
+    
+    # 2. Recupero le ultime analisi dei referti salvate (Tabella referti_medici)
+    try:
+        ref_res = supabase.table("referti_medici").select("data_esame, nome_referto, analisi_ia").order("data_esame", desc=True).limit(3).execute()
+        referti_context = ""
+        if ref_res.data:
+            for r in ref_res.data:
+                referti_context += f"- DATA: {r['data_esame']} | TIPO: {r['nome_referto']} | ESITO IA: {r['analisi_ia']}\n"
+        else:
+            referti_context = "Nessun referto recente in archivio."
+    except:
+        referti_context = "Errore nel recupero storico referti."
+
+    sys_prompt = f"""Sei un Medico Specialista in Medicina Interna e Diagnostica.
+    Il tuo compito è fornire un'analisi clinica oggettiva e completa per il paziente {profile['nome_paziente']}.
+    
+    PROFILO CLINICO FISSO: {profile['quadro_clinico']}
+    TERAPIA IN CORSO: {profile['terapia_attuale']}
+    
+    DATI A TUA DISPOSIZIONE:
+    1. TREND PARAMETRI (Ultimi giorni): 
+    {data_summary}
+    
+    2. STORICO REFERTI (Ecografie, RX, Analisi):
+    {referti_context}
+
+    OBIETTIVO:
+    - Analizza se i parametri numerici attuali sono coerenti con i referti medici.
+    - Se l'utente segnala nuovi sintomi nel 'CONTESTO', verifica se possono essere collegati ai referti archiviati (es: un dolore addominale collegato a un'ecografia specifica).
+    - Fornisci una valutazione professionale, oggettiva e strutturata in: 'Sintesi Clinica Integrata', 'Correlazione Parametri-Referti' e 'Suggerimenti di Monitoraggio'."""
+
+    prompt = f"[CONTESTO ATTUALE RIFERITO DALL'UTENTE]: {context if context else 'Nessuna nota specifica oggi.'}"
+    
+    try:
+        response = client_ai.chat.completions.create(
+            model="gpt-4o", # GPT-4o è fondamentale qui per la capacità di sintesi medica
+            messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": prompt}],
+            temperature=0.3
+        )
+        return response.choices[0].message.content
+    except Exception as e: return f"Errore AI: {e}"
+
+def OLD_get_ai_analysis(df, profile, context="", is_report=False):
     # Selezione dati per analisi di trend
     recent = df.sort_values(by='created_at', ascending=False).head(12)
     data_summary = recent.to_string(columns=['created_at', 'oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature', 'notes'])
@@ -265,13 +311,16 @@ if not df.empty:
         with cm:
             st.plotly_chart(px.imshow(df[sc].corr(), text_auto=".2f", color_continuous_scale='RdBu_r'), use_container_width=True)
 
-    with tabs[2]: # AI (Migliorato Esteticamente)
-        st.subheader("🤖 Smart Medical Assistant")
-        with st.expander("📝 Note per l'IA", expanded=False):
-            exc = st.text_area("Aggiungi dettagli extra (es: sintomi del giorno)")
-        if st.button("🚀 Avvia Analisi"):
-            with st.spinner("Analisi in corso..."):
+    with tabs[2]: # AI (Tab Assistente AI)
+        st.subheader("🤖 Assistente Medico Integrato (Dati + Referti)")
+        with st.expander("📝 Descrivi come ti senti oggi", expanded=True):
+            exc = st.text_area("Inserisci sintomi, sensazioni o domande per l'IA...")
+        
+        if st.button("🚀 Avvia Analisi Integrata"):
+            with st.spinner("L'IA sta incrociando i tuoi parametri con lo storico dei referti..."):
+                # Ora get_ai_analysis farà tutto il lavoro di recupero referti internamente
                 st.session_state.ai_text = get_ai_analysis(df, profile, exc)
+        
         if "ai_text" in st.session_state:
             st.container(border=True).markdown(st.session_state.ai_text)
 
