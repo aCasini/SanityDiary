@@ -64,8 +64,7 @@ def get_ai_analysis(df, profile, context="", is_report=False):
     sys_prompt = f"""Sei un medico specialista. Analizza i dati di {profile['nome_paziente']}.
     QUADRO CLINICO: {profile['quadro_clinico']}
     TERAPIA: {profile['terapia_attuale']}
-    SOGLIA O2 MIN: {profile['soglia_ossigeno_min']}%
-    Fornisci un'analisi clinica accurata."""
+    SOGLIA O2 MIN: {profile['soglia_ossigeno_min']}%"""
 
     prompt = f"DATI RECENTI:\n{data_summary}\n\nCONTESTO AGGIUNTIVO: {context}"
     if is_report: prompt = f"ANALISI REFERTO:\n{context}\n\nCONFRONTO CON STORICO:\n{data_summary}"
@@ -107,7 +106,8 @@ def export_pdf(df, profile, ai_comment):
     for h, w in cols: pdf.cell(w, 8, h, 1, 0, "C", True)
     pdf.ln()
     pdf.set_font("Arial", "", 8)
-    for _, r in df.sort_values(by='created_at', ascending=False).iterrows():
+    df_sorted = df.sort_values(by='created_at', ascending=False)
+    for _, r in df_sorted.iterrows():
         pdf.cell(35, 7, r['created_at'].strftime('%d/%m/%y %H:%M'), 1)
         pdf.cell(12, 7, f"{r.get('oxygen','-')}%", 1, 0, "C")
         pdf.cell(12, 7, str(r.get('bpm','-')), 1, 0, "C")
@@ -115,6 +115,21 @@ def export_pdf(df, profile, ai_comment):
         pdf.cell(20, 7, f"{r.get('systolic','-')}/{r.get('diastolic','-')}", 1, 0, "C")
         pdf.cell(15, 7, str(r.get('weight','-')), 1, 0, "C")
         pdf.ln()
+
+    # Sezione Note dedicata (per non troncarle)
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0, 10, "DIARIO NOTE E OSSERVAZIONI", ln=True)
+    pdf.ln(2)
+    for _, r in df_sorted.iterrows():
+        if r['notes'] and str(r['notes']).strip() != "":
+            pdf.set_font("Arial", "B", 9)
+            pdf.cell(0, 6, r['created_at'].strftime('%d/%m/%Y %H:%M'), ln=True)
+            pdf.set_font("Arial", "", 10)
+            pdf.multi_cell(0, 6, clean_text(str(r['notes'])))
+            pdf.ln(2)
+            pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+            pdf.ln(2)
 
     return pdf.output(dest='S').encode('latin-1')
 
@@ -140,13 +155,11 @@ try:
 except: pass
 
 if not df.empty:
-    # DASHBOARD CON FRECCE COLORATE
     m = st.columns(4)
-    def get_delta(col, inverse=False):
+    def get_delta(col):
         v = df[col].dropna()
         if len(v) < 2: return None
-        d = round(float(v.iloc[-1] - v.iloc[-2]), 1)
-        return d
+        return round(float(v.iloc[-1] - v.iloc[-2]), 1)
     
     m[0].metric("Ossigeno", f"{df['oxygen'].iloc[-1]}%", get_delta('oxygen'))
     m[1].metric("BPM", df['bpm'].iloc[-1], get_delta('bpm'), delta_color="inverse")
@@ -154,14 +167,12 @@ if not df.empty:
     m[3].metric("Peso", f"{df['weight'].iloc[-1]}kg", get_delta('weight'))
 
     st.divider()
-
-    # TUTTI I TAB RIPRISTINATI
     tabs = st.tabs(["📈 Trend", "🧬 Statistiche", "🤖 Assistente IA", "📅 Visite", "📂 Referti (OCR)", "👤 Profilo", "📋 Registro"])
 
-    with tabs[0]: # Grafico Trend
+    with tabs[0]:
         st.plotly_chart(px.line(df, x='created_at', y=['oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature'], markers=True, template="plotly_white"), use_container_width=True)
 
-    with tabs[1]: # Analisi Statica (Pearson)
+    with tabs[1]:
         st.subheader("🧬 Studio Correlazioni (Pearson)")
         cd, cm = st.columns([1, 2])
         sc = ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature']
@@ -175,36 +186,35 @@ if not df.empty:
         with cm:
             st.plotly_chart(px.imshow(df[sc].corr(), text_auto=".2f", color_continuous_scale='RdBu_r'), use_container_width=True)
 
-    with tabs[2]: # Assistente IA
+    with tabs[2]:
         st.subheader("🤖 Assistente IA Personalizzato")
         exc = st.text_area("Aggiungi note per l'analisi:")
         if st.button("Esegui Analisi Clinica"):
             st.session_state.ai_text = get_ai_analysis(df, profile, exc)
-        if "ai_text" in st.session_state:
-            st.markdown(st.session_state.ai_text)
+        if "ai_text" in st.session_state: st.markdown(st.session_state.ai_text)
 
-    with tabs[3]: # Visite
+    with tabs[3]:
         v1, v2 = st.columns([1, 2])
         with v1:
             with st.form("av"):
-                nv, dv, lv = st.text_input("Nome Visita"), st.date_input("Data"), st.text_input("Luogo")
+                nv, dv, lv = st.text_input("Visita"), st.date_input("Data"), st.text_input("Luogo")
                 if st.form_submit_button("Salva"):
                     supabase.table("visite_mediche").insert({"nome_visita":nv, "data_visita":str(dv), "luogo":lv, "completata":False}).execute()
                     st.rerun()
         with v2:
             vd = supabase.table("visite_mediche").select("*").order("data_visita").execute().data
             for v in (vd or []):
-                c_a, c_b = st.columns([4, 1])
-                c_a.write(f"{'✅' if v['completata'] else '⏳'} **{v['data_visita']}**: {v['nome_visita']}")
-                if not v['completata'] and c_b.button("Fatto", key=f"v_{v['id']}"):
+                ca, cb = st.columns([4, 1])
+                ca.write(f"{'✅' if v['completata'] else '⏳'} **{v['data_visita']}**: {v['nome_visita']}")
+                if not v['completata'] and cb.button("Fatto", key=f"v_{v['id']}"):
                     supabase.table("visite_mediche").update({"completata":True}).eq("id", v['id']).execute()
                     st.rerun()
 
-    with tabs[4]: # Referti OCR
-        st.subheader("📂 Archivio Referti & Analisi OCR")
-        fup = st.file_uploader("Carica referto PDF", type="pdf")
+    with tabs[4]:
+        st.subheader("📂 Archivio Referti & OCR")
+        fup = st.file_uploader("Carica PDF", type="pdf")
         if fup and st.button("Analizza con IA"):
-            with st.spinner("Lettura referto..."):
+            with st.spinner("Lettura..."):
                 txt = extract_text_from_pdf(fup)
                 st.session_state.rep_ai = get_ai_analysis(df, profile, txt, is_report=True)
                 b64 = base64.b64encode(fup.getvalue()).decode('utf-8')
@@ -212,28 +222,29 @@ if not df.empty:
                 st.rerun()
         if "rep_ai" in st.session_state: st.success(st.session_state.rep_ai)
         st.divider()
-        docs = supabase.table("referti_medici").select("*").order("data_esame", desc=True).execute().data
-        for d in (docs or []):
+        for d in (supabase.table("referti_medici").select("*").order("data_esame", desc=True).execute().data or []):
             with st.expander(f"📄 {d['data_esame']} - {d['nome_referto']}"):
-                st.download_button("Scarica File", base64.b64decode(d['file_path']), file_name=d['nome_referto'], key=f"dl_{d['id']}")
+                st.download_button("Scarica", base64.b64decode(d['file_path']), file_name=d['nome_referto'], key=f"dl_{d['id']}")
 
-    with tabs[5]: # Profilo
+    with tabs[5]:
         st.subheader("👤 Profilo Clinico")
         with st.form("up_prof"):
-            nome = st.text_input("Nome Paziente", profile['nome_paziente'])
+            nome = st.text_input("Nome", profile['nome_paziente'])
             quadro = st.text_area("Quadro Clinico", profile['quadro_clinico'])
-            terapia = st.text_area("Terapia Attuale", profile['terapia_attuale'])
-            soglia = st.number_input("Soglia Allarme O2", 80, 100, profile['soglia_ossigeno_min'])
+            terapia = st.text_area("Terapia", profile['terapia_attuale'])
+            soglia = st.number_input("Soglia O2", 80, 100, profile['soglia_ossigeno_min'])
             if st.form_submit_button("Salva Profilo"):
                 supabase.table("user_profile").update({"nome_paziente":nome, "quadro_clinico":quadro, "terapia_attuale":terapia, "soglia_ossigeno_min":soglia}).eq("id", 1).execute()
                 st.rerun()
 
-    with tabs[6]: # Registro
-        pdf_rep = export_pdf(df, profile, st.session_state.get("ai_text", "Generare analisi."))
+    with tabs[6]:
+        pdf_rep = export_pdf(df, profile, st.session_state.get("ai_text", "Nessuna analisi."))
         st.download_button("📥 Scarica Report PDF", pdf_rep, "report.pdf", "application/pdf")
         st.dataframe(df.sort_values('created_at', ascending=False), use_container_width=True)
+else:
+    st.info("Inserisci una misura nella sidebar per iniziare.")
 
-# Sidebar
+# Sidebar (sempre visibile)
 with st.sidebar:
     st.header("⚙️ Nuova Misura")
     with st.form("h", clear_on_submit=True):
@@ -244,5 +255,3 @@ with st.sidebar:
         if st.form_submit_button("Salva"):
             supabase.table("health_logs").insert({"oxygen":o, "bpm":b, "systolic":s, "diastolic":d, "weight":w, "temperature":t, "notes":n}).execute()
             st.rerun()
-else:
-    st.info("Inserisci una misura per iniziare.")
