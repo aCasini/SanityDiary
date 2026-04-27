@@ -205,54 +205,67 @@ def OLD_get_ai_analysis(df, profile, context="", is_report=False):
 def export_pdf(df, profile, ai_comment):
     pdf = FPDF()
     pdf.add_page()
+    
+    # Intestazione
     pdf.set_font("Arial", "B", 16)
     pdf.cell(0, 10, clean_text_for_pdf(f"REPORT CLINICO: {profile['nome_paziente']}"), ln=True, align="C")
     
-    # Sezione Profilo
+    # Sezione Profilo Paziente
     pdf.set_fill_color(240, 240, 240)
     pdf.set_font("Arial", "B", 10)
-    pdf.cell(0, 8, " INFORMAZIONI PAZIENTE", ln=True, fill=True)
+    pdf.cell(0, 8, " INFORMAZIONI PAZIENTE E TERAPIA", ln=True, fill=True)
     pdf.set_font("Arial", "", 9)
-    pdf.multi_cell(0, 5, clean_text_for_pdf(f"Quadro: {profile['quadro_clinico']}\nTerapia: {profile['terapia_attuale']}"))
+    info_testo = f"Quadro Clinico: {profile['quadro_clinico']}\nTerapia Attuale: {profile['terapia_attuale']}"
+    pdf.multi_cell(0, 5, clean_text_for_pdf(info_testo))
     pdf.ln(5)
 
-    # Sezione AI pulita
+    # Sezione Analisi Integrata IA
     pdf.set_fill_color(245, 245, 245)
     pdf.set_font("Arial", "B", 10)
-    pdf.cell(0, 8, " ANALISI ASSISTENTE IA", ln=True, fill=True)
+    pdf.cell(0, 8, " VALUTAZIONE CLINICA ASSISTENTE IA (Sintesi Dati + Referti)", ln=True, fill=True)
     pdf.set_font("Arial", "", 9)
-    pdf.multi_cell(0, 6, clean_text_for_pdf(ai_comment))
+    pdf.multi_cell(0, 5, clean_text_for_pdf(ai_comment))
     pdf.ln(5)
 
-    # Tabella Dati
+    # Tabella Dati con colonna NOTE ripristinata
     pdf.set_fill_color(230, 240, 255)
     pdf.set_font("Arial", "B", 8)
-    cols = [("Data Ora", 35), ("O2", 12), ("BPM", 12), ("T C", 12), ("Press", 20), ("Peso", 15)]
-    for h, w in cols: pdf.cell(w, 8, h, 1, 0, "C", True)
+    
+    # Larghezze colonne regolate per far stare le Note (totale ~190mm)
+    # Data(30), O2(10), BPM(10), Press(18), Temp(10), Peso(12), Note(100)
+    cols = [
+        ("Data Ora", 30), ("O2", 10), ("BPM", 10), 
+        ("Press", 18), ("T C", 10), ("Kg", 12), ("Note/Sintomi", 100)
+    ]
+    
+    for h, w in cols: 
+        pdf.cell(w, 8, h, 1, 0, "C", True)
     pdf.ln()
     
-    pdf.set_font("Arial", "", 8)
+    pdf.set_font("Arial", "", 7) # Font leggermente più piccolo per le note lunghe
     df_sorted = df.sort_values(by='created_at', ascending=False)
-    for _, r in df_sorted.head(40).iterrows():
-        pdf.cell(35, 7, r['created_at'].strftime('%d/%m/%y %H:%M'), 1)
-        pdf.cell(12, 7, f"{r.get('oxygen','-')}%", 1, 0, "C")
-        pdf.cell(12, 7, str(r.get('bpm','-')), 1, 0, "C")
-        pdf.cell(12, 7, str(r.get('temperature','-')), 1, 0, "C")
-        pdf.cell(20, 7, f"{r.get('systolic','-')}/{r.get('diastolic','-')}", 1, 0, "C")
-        pdf.cell(15, 7, str(r.get('weight','-')), 1, 0, "C")
-        pdf.ln()
-
-    # Note
-    pdf.add_page()
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, "DIARIO NOTE COMPLETO", ln=True)
-    for _, r in df_sorted.iterrows():
-        if r['notes']:
-            pdf.set_font("Arial", "B", 9)
-            pdf.cell(0, 6, r['created_at'].strftime('%d/%m/%Y %H:%M'), ln=True)
-            pdf.set_font("Arial", "", 10)
-            pdf.multi_cell(0, 6, clean_text_for_pdf(str(r['notes'])))
-            pdf.ln(4)
+    
+    for _, r in df_sorted.head(50).iterrows():
+        # Calcoliamo l'altezza della riga in base alla lunghezza della nota
+        nota = str(r.get('notes', '-')) if r.get('notes') else "-"
+        # Pulizia testo
+        nota_clean = clean_text_for_pdf(nota)
+        
+        # Salviamo la posizione corrente
+        x = pdf.get_x()
+        y = pdf.get_y()
+        
+        # Stampiamo le celle fisse
+        pdf.cell(30, 6, r['created_at'].strftime('%d/%m/%y %H:%M'), 1)
+        pdf.cell(10, 6, f"{r.get('oxygen','-')}%", 1, 0, "C")
+        pdf.cell(10, 6, str(r.get('bpm','-')), 1, 0, "C")
+        pdf.cell(18, 6, f"{r.get('systolic','-')}/{r.get('diastolic','-')}", 1, 0, "C")
+        pdf.cell(10, 6, str(r.get('temperature','-')), 1, 0, "C")
+        pdf.cell(12, 6, str(r.get('weight','-')), 1, 0, "C")
+        
+        # Multi_cell per la colonna Note (permette il wrap del testo)
+        pdf.multi_cell(100, 6, nota_clean, 1, "L")
+        
     return pdf.output(dest='S').encode('latin-1')
 
 # --- 5. RECUPERO DATI ---
