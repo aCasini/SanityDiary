@@ -72,16 +72,17 @@ def extract_text_from_pdf(pdf_file):
 def get_ai_vision_analysis(base64_image):
     try:
         response = client_ai.chat.completions.create(
-            model="gpt-4o", # Modello Vision
+            model="gpt-4o", # Modello con capacità visive
             messages=[
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "Trascrivi fedelmente tutto il testo di questo referto medico. Estrai solo i dati clinici e i valori degli esami."},
+                        {"type": "text", "text": "Sei un assistente medico. Trascrivi in modo professionale e oggettivo tutti i dati clinici, i valori degli esami e le conclusioni presenti in questa immagine di referto. Non tralasciare i valori fuori norma."},
                         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
                     ],
                 }
             ],
+            max_tokens=2000
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -269,27 +270,25 @@ if not df.empty:
                     st.rerun()
 
     with tabs[4]: # OCR Referti
-        st.subheader("📂 Carica o Fotografa Referto")
+        st.subheader("📂 Gestione Referti Medici")
         
-        # Il parametro 'label' è visibile, ma è il selettore che fa la magia
-        # Sugli smartphone, cliccando qui, apparirà l'opzione "Scatta foto"
+        # 1. Sezione Upload/Fotocamera
         fup = st.file_uploader("Carica un PDF o scatta una foto al referto", type=["pdf", "jpg", "jpeg", "png"])
         
-        if fup and st.button("Analizza Documento"):
-            with st.spinner("Elaborazione in corso..."):
-                # Gestione dinamica: Immagine o PDF?
+        if fup and st.button("Analizza e Salva Documento"):
+            with st.spinner("L'intelligenza artificiale sta leggendo il documento..."):
+                # Gestione differenziata Immagine vs PDF
                 if fup.type == "application/pdf":
                     txt = extract_text_from_pdf(fup)
                 else:
-                    # Se è un'immagine (foto), usiamo l'IA per "leggerla" direttamente
-                    # Nota: GPT-4o può analizzare direttamente le immagini (Vision)
-                    import base64
+                    # Trasforma l'immagine in base64 per GPT-4o Vision
                     base64_image = base64.b64encode(fup.getvalue()).decode('utf-8')
-                    txt = get_ai_vision_analysis(base64_image) # Nuova funzione per le foto
+                    txt = get_ai_vision_analysis(base64_image)
                 
+                # Analisi clinica del testo estratto
                 st.session_state.rep_ai = get_ai_analysis(df, profile, txt, is_report=True)
                 
-                # Salvataggio nel DB (mantenendo la tua struttura)
+                # Salvataggio su Supabase
                 supabase.table("referti_medici").insert({
                     "nome_referto": fup.name, 
                     "data_esame": str(datetime.now().date()), 
@@ -297,6 +296,43 @@ if not df.empty:
                     "note": txt
                 }).execute()
                 st.rerun()
+        
+        # Visualizzazione analisi appena effettuata
+        if "rep_ai" in st.session_state:
+            st.success("✅ Analisi completata!")
+            st.info(st.session_state.rep_ai)
+            if st.button("Chiudi Analisi"):
+                del st.session_state.rep_ai
+                st.rerun()
+
+        st.divider()
+        
+        # 2. Ripristino Lista Storica (fondamentale!)
+        st.subheader("📜 Archivio Referti")
+        docs_res = supabase.table("referti_medici").select("*").order("data_esame", desc=True).execute()
+        docs = docs_res.data if docs_res.data else []
+        
+        if not docs:
+            st.info("Non ci sono ancora referti archiviati.")
+        else:
+            for d in docs:
+                with st.expander(f"📄 {d['data_esame']} - {d['nome_referto']}"):
+                    col_info, col_dl = st.columns([3, 1])
+                    with col_info:
+                        st.write("**Contenuto estratto:**")
+                        st.caption(d['note'][:500] + "..." if d['note'] and len(d['note']) > 500 else d['note'])
+                    with col_dl:
+                        # Tasto per scaricare il file originale salvato in Base64
+                        try:
+                            file_bytes = base64.b64decode(d['file_path'])
+                            st.download_button(
+                                label="📥 Scarica",
+                                data=file_bytes,
+                                file_name=d['nome_referto'],
+                                key=f"dl_{d['id']}"
+                            )
+                        except:
+                            st.error("Errore nel recupero del file.")
 
     with tabs[5]: # Profilo (Nuovo)
         st.subheader("👤 Profilo Clinico")
