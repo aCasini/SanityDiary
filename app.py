@@ -309,7 +309,13 @@ if not df.empty:
         
         # 2. Ripristino Lista Storica (fondamentale!)
         st.subheader("📜 Archivio Referti")
-        docs_res = supabase.table("referti_medici").select("*").order("data_esame", desc=True).execute()
+        #docs_res = supabase.table("referti_medici").select("*").order("data_esame", desc=True).execute()
+        docs_res = supabase.table("referti_medici").insert({
+            "nome_referto": fup.name, 
+            "data_esame": str(datetime.now().date()), 
+            "file_path": base64.b64encode(fup.getvalue()).decode('utf-8'), 
+            "note": txt  # <--- Verifica se qui deve essere 'note' o 'notes'
+        }).execute()
         docs = docs_res.data if docs_res.data else []
         
         if not docs:
@@ -320,7 +326,9 @@ if not df.empty:
                     col_info, col_dl = st.columns([3, 1])
                     with col_info:
                         st.write("**Contenuto estratto:**")
-                        st.caption(d['note'][:500] + "..." if d['note'] and len(d['note']) > 500 else d['note'])
+                        # Usiamo .get() per evitare il KeyError se la colonna 'note' non esiste
+                        testo_referto = d.get('note') or d.get('notes') or "Nessun testo estratto"
+                        st.caption(testo_referto[:500] + "..." if len(testo_referto) > 500 else testo_referto)
                     with col_dl:
                         # Tasto per scaricare il file originale salvato in Base64
                         try:
