@@ -1,14 +1,20 @@
 {
-  "name": "Sanity Diary Intelligence",
+  "name": "Sanity Diary AI",
   "short_name": "SanityDiary",
-  "description": "Monitoraggio Clinico Intelligente",
-  "start_url": "/",
+  "description": "Diario clinico intelligente per Alessio Casini",
+  "start_url": ".",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#007bff",
+  "background_color": "#FFFFFF",
+  "theme_color": "#31333F",
   "icons": [
     {
-      "src": "https://cdn-icons-png.flaticon.com/512/2966/2966327.png",
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
       "sizes": "512x512",
       "type": "image/png"
     }
