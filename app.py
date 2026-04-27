@@ -272,75 +272,69 @@ if not df.empty:
     with tabs[4]: # OCR Referti
         st.subheader("📂 Gestione Referti Medici")
         
-        # 1. Sezione Upload/Fotocamera
-        fup = st.file_uploader("Carica un PDF o scatta una foto al referto", type=["pdf", "jpg", "jpeg", "png"])
+        # Usiamo un widget con una chiave statica per mantenere lo stato
+        fup = st.file_uploader("Carica un PDF o scatta una foto", type=["pdf", "jpg", "jpeg", "png"], key="file_scanner")
         
-        if fup and st.button("Analizza e Salva Documento"):
-            with st.spinner("L'intelligenza artificiale sta leggendo il documento..."):
-                # Gestione differenziata Immagine vs PDF
-                if fup.type == "application/pdf":
-                    txt = extract_text_from_pdf(fup)
-                else:
-                    # Trasforma l'immagine in base64 per GPT-4o Vision
-                    base64_image = base64.b64encode(fup.getvalue()).decode('utf-8')
-                    txt = get_ai_vision_analysis(base64_image)
-                
-                # Analisi clinica del testo estratto
-                st.session_state.rep_ai = get_ai_analysis(df, profile, txt, is_report=True)
-                
-                # Salvataggio su Supabase
-                supabase.table("referti_medici").insert({
-                    "nome_referto": fup.name, 
-                    "data_esame": str(datetime.now().date()), 
-                    "file_path": base64.b64encode(fup.getvalue()).decode('utf-8'), 
-                    "note": txt
-                }).execute()
-                st.rerun()
+        if fup is not None:
+            # Mostriamo un'anteprima se è un'immagine
+            if fup.type != "application/pdf":
+                st.image(fup, caption="Anteprima scatto", width=300)
+            
+            if st.button("🚀 Analizza e Salva Documento"):
+                with st.spinner("L'intelligenza artificiale sta leggendo..."):
+                    try:
+                        # 1. Estrazione Testo
+                        if fup.type == "application/pdf":
+                            txt = extract_text_from_pdf(fup)
+                        else:
+                            base64_image = base64.b64encode(fup.getvalue()).decode('utf-8')
+                            txt = get_ai_vision_analysis(base64_image)
+                        
+                        # 2. Analisi Clinica
+                        st.session_state.rep_ai = get_ai_analysis(df, profile, txt, is_report=True)
+                        
+                        # 3. Salvataggio sicuro (usiamo variabili locali estratte subito)
+                        file_name = fup.name
+                        file_bytes = fup.getvalue()
+                        
+                        supabase.table("referti_medici").insert({
+                            "nome_referto": file_name, 
+                            "data_esame": str(datetime.now().date()), 
+                            "file_path": base64.b64encode(file_bytes).decode('utf-8'), 
+                            "note": txt
+                        }).execute()
+                        
+                        st.success("Referto salvato correttamente!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Errore durante l'elaborazione: {e}")
         
-        # Visualizzazione analisi appena effettuata
+        # Visualizzazione analisi temporanea
         if "rep_ai" in st.session_state:
-            st.success("✅ Analisi completata!")
-            st.info(st.session_state.rep_ai)
-            if st.button("Chiudi Analisi"):
-                del st.session_state.rep_ai
-                st.rerun()
+            with st.container(border=True):
+                st.markdown("### 🔍 Analisi Rapida Referto")
+                st.write(st.session_state.rep_ai)
+                if st.button("Chiudi Analisi"):
+                    del st.session_state.rep_ai
+                    st.rerun()
 
         st.divider()
         
-        # 2. Ripristino Lista Storica (fondamentale!)
+        # Elenco storico referti
         st.subheader("📜 Archivio Referti")
-        #docs_res = supabase.table("referti_medici").select("*").order("data_esame", desc=True).execute()
-        docs_res = supabase.table("referti_medici").insert({
-            "nome_referto": fup.name, 
-            "data_esame": str(datetime.now().date()), 
-            "file_path": base64.b64encode(fup.getvalue()).decode('utf-8'), 
-            "note": txt  # <--- Verifica se qui deve essere 'note' o 'notes'
-        }).execute()
-        docs = docs_res.data if docs_res.data else []
-        
-        if not docs:
-            st.info("Non ci sono ancora referti archiviati.")
-        else:
+        try:
+            docs = supabase.table("referti_medici").select("*").order("data_esame", desc=True).execute().data
+            if not docs:
+                st.info("Nessun referto in archivio.")
             for d in docs:
                 with st.expander(f"📄 {d['data_esame']} - {d['nome_referto']}"):
-                    col_info, col_dl = st.columns([3, 1])
-                    with col_info:
-                        st.write("**Contenuto estratto:**")
-                        # Usiamo .get() per evitare il KeyError se la colonna 'note' non esiste
-                        testo_referto = d.get('note') or d.get('notes') or "Nessun testo estratto"
-                        st.caption(testo_referto[:500] + "..." if len(testo_referto) > 500 else testo_referto)
-                    with col_dl:
-                        # Tasto per scaricare il file originale salvato in Base64
-                        try:
-                            file_bytes = base64.b64decode(d['file_path'])
-                            st.download_button(
-                                label="📥 Scarica",
-                                data=file_bytes,
-                                file_name=d['nome_referto'],
-                                key=f"dl_{d['id']}"
-                            )
-                        except:
-                            st.error("Errore nel recupero del file.")
+                    t_ref = d.get('note') or d.get('notes') or "Nessun testo disponibile"
+                    st.caption(t_ref[:500] + "..." if len(t_ref) > 500 else t_ref)
+                    
+                    if d.get('file_path'):
+                        st.download_button("📥 Scarica Originale", base64.b64decode(d['file_path']), file_name=d['nome_referto'], key=f"dl_{d['id']}")
+        except:
+            st.error("Impossibile caricare la cronologia dei referti.")
 
     with tabs[5]: # Profilo (Nuovo)
         st.subheader("👤 Profilo Clinico")
