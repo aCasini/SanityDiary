@@ -69,6 +69,29 @@ def extract_text_from_pdf(pdf_file):
     except Exception as e:
         return f"Errore lettura PDF: {e}"
 
+def get_standalone_report_analysis(report_text):
+    """Analisi pura del referto senza interferenze dai dati storici del diario."""
+    sys_prompt = """Sei un medico radiologo/specialista. 
+    Analizza il seguente referto (es. ecografia, RX, esami sangue) in modo OGGETTIVO e PROFESSIONALE.
+    
+    ISTRUZIONI:
+    1. Trascrivi i punti chiave.
+    2. Spiega in termini medici semplici ma precisi cosa è stato riscontrato.
+    3. Evidenzia eventuali anomalie che richiedono attenzione immediata.
+    NON usare i dati delle misurazioni giornaliere (ossigeno, bpm), concentrati SOLO sul testo fornito."""
+
+    try:
+        response = client_ai.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": sys_prompt}, 
+                {"role": "user", "content": f"ANALIZZA QUESTO REFERTO:\n{report_text}"}
+            ],
+            temperature=0.2
+        )
+        return response.choices[0].message.content
+    except Exception as e: return f"Errore: {e}"
+
 def get_ai_vision_analysis(base64_image):
     try:
         response = client_ai.chat.completions.create(
@@ -270,71 +293,38 @@ if not df.empty:
                     st.rerun()
 
     with tabs[4]: # OCR Referti
-        st.subheader("📂 Gestione Referti Medici")
-        
-        # Usiamo un widget con una chiave statica per mantenere lo stato
-        fup = st.file_uploader("Carica un PDF o scatta una foto", type=["pdf", "jpg", "jpeg", "png"], key="file_scanner")
+        st.subheader("📂 Analisi Specifica Referto")
+        fup = st.file_uploader("Carica PDF o scatta foto", type=["pdf", "jpg", "jpeg", "png"], key="scanner_v3")
         
         if fup is not None:
-            # Mostriamo un'anteprima se è un'immagine
-            if fup.type != "application/pdf":
-                st.image(fup, caption="Anteprima scatto", width=300)
-            
-            if st.button("🚀 Analizza e Salva Documento"):
-                with st.spinner("L'intelligenza artificiale sta leggendo..."):
-                    try:
-                        # 1. Estrazione Testo
-                        if fup.type == "application/pdf":
-                            txt = extract_text_from_pdf(fup)
-                        else:
-                            base64_image = base64.b64encode(fup.getvalue()).decode('utf-8')
-                            txt = get_ai_vision_analysis(base64_image)
-                        
-                        # 2. Analisi Clinica
-                        st.session_state.rep_ai = get_ai_analysis(df, profile, txt, is_report=True)
-                        
-                        # 3. Salvataggio sicuro (usiamo variabili locali estratte subito)
-                        file_name = fup.name
-                        file_bytes = fup.getvalue()
-                        
-                        supabase.table("referti_medici").insert({
-                            "nome_referto": file_name, 
-                            "data_esame": str(datetime.now().date()), 
-                            "file_path": base64.b64encode(file_bytes).decode('utf-8'), 
-                            "note": txt
-                        }).execute()
-                        
-                        st.success("Referto salvato correttamente!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Errore durante l'elaborazione: {e}")
-        
-        # Visualizzazione analisi temporanea
-        if "rep_ai" in st.session_state:
-            with st.container(border=True):
-                st.markdown("### 🔍 Analisi Rapida Referto")
-                st.write(st.session_state.rep_ai)
-                if st.button("Chiudi Analisi"):
-                    del st.session_state.rep_ai
+            if st.button("🚀 Analizza Referto"):
+                with st.spinner("Analisi clinica del documento..."):
+                    # 1. Estrazione testo (OCR o Vision)
+                    if fup.type == "application/pdf":
+                        raw_text = extract_text_from_pdf(fup)
+                    else:
+                        base64_img = base64.b64encode(fup.getvalue()).decode('utf-8')
+                        raw_text = get_ai_vision_analysis(base64_img)
+                    
+                    # 2. Analisi ISOLATA del referto (usando la nuova funzione)
+                    st.session_state.rep_ai = get_standalone_report_analysis(raw_text)
+                    
+                    # 3. Salvataggio su Supabase (salviamo sia il testo grezzo che l'analisi)
+                    supabase.table("referti_medici").insert({
+                        "nome_referto": fup.name, 
+                        "data_esame": str(datetime.now().date()), 
+                        "file_path": base64.b64encode(fup.getvalue()).decode('utf-8'), 
+                        "note": raw_text,
+                        "analisi_ia": st.session_state.rep_ai # Assicurati che questa colonna esista o salvalo in 'note'
+                    }).execute()
                     st.rerun()
 
-        st.divider()
-        
-        # Elenco storico referti
-        st.subheader("📜 Archivio Referti")
-        try:
-            docs = supabase.table("referti_medici").select("*").order("data_esame", desc=True).execute().data
-            if not docs:
-                st.info("Nessun referto in archivio.")
-            for d in docs:
-                with st.expander(f"📄 {d['data_esame']} - {d['nome_referto']}"):
-                    t_ref = d.get('note') or d.get('notes') or "Nessun testo disponibile"
-                    st.caption(t_ref[:500] + "..." if len(t_ref) > 500 else t_ref)
-                    
-                    if d.get('file_path'):
-                        st.download_button("📥 Scarica Originale", base64.b64decode(d['file_path']), file_name=d['nome_referto'], key=f"dl_{d['id']}")
-        except:
-            st.error("Impossibile caricare la cronologia dei referti.")
+        if "rep_ai" in st.session_state:
+            st.markdown("### 📋 Risultato Ecografia/Referto")
+            st.info(st.session_state.rep_ai) # Questa sarà l'analisi specifica dell'ecografia
+            if st.button("OK, ho letto"):
+                del st.session_state.rep_ai
+                st.rerun()
 
     with tabs[5]: # Profilo (Nuovo)
         st.subheader("👤 Profilo Clinico")
