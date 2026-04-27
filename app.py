@@ -69,6 +69,24 @@ def extract_text_from_pdf(pdf_file):
     except Exception as e:
         return f"Errore lettura PDF: {e}"
 
+def get_ai_vision_analysis(base64_image):
+    try:
+        response = client_ai.chat.completions.create(
+            model="gpt-4o", # Modello Vision
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Trascrivi fedelmente tutto il testo di questo referto medico. Estrai solo i dati clinici e i valori degli esami."},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                    ],
+                }
+            ],
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Errore Vision: {e}"
+
 def get_ai_analysis(df, profile, context="", is_report=False):
     # Selezione dati per analisi di trend
     recent = df.sort_values(by='created_at', ascending=False).head(12)
@@ -250,21 +268,35 @@ if not df.empty:
                     supabase.table("visite_mediche").update({"completata":True}).eq("id", v['id']).execute()
                     st.rerun()
 
-    with tabs[4]: # OCR Referti (Ripristinato)
-        st.subheader("📂 OCR Referti")
-        fup = st.file_uploader("Carica PDF", type="pdf")
-        if fup and st.button("Analizza Referto"):
-            with st.spinner("Lettura OCR..."):
-                txt = extract_text_from_pdf(fup)
+    with tabs[4]: # OCR Referti
+        st.subheader("📂 Carica o Fotografa Referto")
+        
+        # Il parametro 'label' è visibile, ma è il selettore che fa la magia
+        # Sugli smartphone, cliccando qui, apparirà l'opzione "Scatta foto"
+        fup = st.file_uploader("Carica un PDF o scatta una foto al referto", type=["pdf", "jpg", "jpeg", "png"])
+        
+        if fup and st.button("Analizza Documento"):
+            with st.spinner("Elaborazione in corso..."):
+                # Gestione dinamica: Immagine o PDF?
+                if fup.type == "application/pdf":
+                    txt = extract_text_from_pdf(fup)
+                else:
+                    # Se è un'immagine (foto), usiamo l'IA per "leggerla" direttamente
+                    # Nota: GPT-4o può analizzare direttamente le immagini (Vision)
+                    import base64
+                    base64_image = base64.b64encode(fup.getvalue()).decode('utf-8')
+                    txt = get_ai_vision_analysis(base64_image) # Nuova funzione per le foto
+                
                 st.session_state.rep_ai = get_ai_analysis(df, profile, txt, is_report=True)
-                supabase.table("referti_medici").insert({"nome_referto":fup.name, "data_esame":str(datetime.now().date()), "file_path":base64.b64encode(fup.getvalue()).decode('utf-8'), "note":txt}).execute()
+                
+                # Salvataggio nel DB (mantenendo la tua struttura)
+                supabase.table("referti_medici").insert({
+                    "nome_referto": fup.name, 
+                    "data_esame": str(datetime.now().date()), 
+                    "file_path": base64.b64encode(fup.getvalue()).decode('utf-8'), 
+                    "note": txt
+                }).execute()
                 st.rerun()
-        if "rep_ai" in st.session_state: st.success(st.session_state.rep_ai)
-        st.divider()
-        docs = supabase.table("referti_medici").select("*").order("data_esame", desc=True).execute().data
-        for d in (docs or []):
-            with st.expander(f"📄 {d['data_esame']} - {d['nome_referto']}"):
-                st.download_button("Scarica", base64.b64decode(d['file_path']), file_name=d['nome_referto'], key=f"dl_{d['id']}")
 
     with tabs[5]: # Profilo (Nuovo)
         st.subheader("👤 Profilo Clinico")
