@@ -61,25 +61,46 @@ def extract_text_from_pdf(pdf_file):
         return f"Errore lettura PDF: {e}"
 
 def get_ai_analysis(df, profile, context="", is_report=False):
-    recent = df.sort_values(by='created_at', ascending=False).head(15)
+    # Selezione dati per analisi di trend
+    recent = df.sort_values(by='created_at', ascending=False).head(12)
     data_summary = recent.to_string(columns=['created_at', 'oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature', 'notes'])
     
-    sys_prompt = f"""Sei un medico specialista esperto. Analizza i dati di {profile['nome_paziente']}.
-    QUADRO CLINICO: {profile['quadro_clinico']}
-    TERAPIA: {profile['terapia_attuale']}
-    SOGLIA O2 MIN: {profile['soglia_ossigeno_min']}%
+    sys_prompt = f"""Sei un Medico Specialista esperto in Diagnostica e Medicina Interna.
+    Il tuo obiettivo è fornire un'analisi clinica oggettiva, professionale e basata su evidenze per il paziente {profile['nome_paziente']}.
+    
+    PROFILO CLINICO NOTO:
+    - Quadro: {profile['quadro_clinico']}
+    - Terapia: {profile['terapia_attuale']}
+    - Soglia O2: {profile['soglia_ossigeno_min']}%
 
-    REGOLE DI OUTPUT:
-    1. Usa icone Emoji e Markdown elegante per l'app Streamlit.
-    2. Dividi in: '✅ Sintesi Stato Attuale', '📊 Analisi Parametri', '💊 Consigli e Monitoraggio'."""
+    LINEE GUIDA PER L'ANALISI:
+    1. APPROCCIO ANALITICO: Valuta i dati numerici cercando correlazioni (es. rapporto tra BPM e Saturazione o Pressione Differenziale).
+    2. DIAGNOSI DIFFERENZIALE: Se l'utente riporta sintomi nel 'CONTESTO', incrociali con i dati e cita possibili quadri clinici simili o patologie che presentano pattern analoghi, basandoti sulla letteratura medica.
+    3. VALUTAZIONE DEI RISCHI: Identifica segnali precursori di instabilità clinica.
+    4. LINGUAGGIO: Usa terminologia medica appropriata (es. 'tachicardia compensatoria', 'ipossia lieve', 'iperpiressia', etc.).
+    5. OGGETTIVITÀ: Separa chiaramente i fatti (dati) dalle ipotesi cliniche."""
 
-    prompt = f"DATI RECENTI:\n{data_summary}\n\nCONTESTO EXTRA: {context}"
-    if is_report: prompt = f"ANALISI REFERTO OCR:\n{context}\n\nCONFRONTO CON STORICO:\n{data_summary}"
+    prompt = f"""
+    [INPUT UTENTE / SINTOMATOLOGIA]: 
+    "{context if context else 'Nessun sintomo specifico riferito.'}"
+
+    [TREND DATI RECENTI]:
+    {data_summary}
+
+    ISTRUZIONE: Elabora un'analisi strutturata in: 
+    - Valutazione Parametrica (Oggettiva)
+    - Correlazione Clinica e Diagnosi Differenziale (basata su sintomi e letteratura)
+    - Piano di Monitoraggio Suggerito.
+    """
     
     try:
         response = client_ai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": prompt}]
+            model="gpt-4o", # Usiamo GPT-4o per una capacità di ragionamento medico superiore
+            messages=[
+                {"role": "system", "content": sys_prompt}, 
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3 # Bassa temperatura per massima oggettività e precisione
         )
         return response.choices[0].message.content
     except Exception as e: return f"Errore AI: {e}"
