@@ -19,9 +19,18 @@ except ImportError:
 # --- 1. CONFIGURAZIONE PAGINA & PWA ---
 st.set_page_config(page_title="Sanity Diary AI", page_icon="🧬", layout="wide")
 
-def inject_pwa():
-    pwa_html = """<link rel="manifest" href="./manifest.json"><script>if('serviceWorker' in navigator){navigator.serviceWorker.register('./sw.js');}</script>"""
+def inject_pwa_with_icon():
+    pwa_html = """
+    <link rel="manifest" href="./manifest.json">
+    <link rel="apple-touch-icon" href="./icon-192.png">
+    <meta name="theme-color" content="#31333F">
+    <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('./sw.js');}</script>
+    """
     components.html(pwa_html, height=0)
+
+#def inject_pwa():
+#    pwa_html = """<link rel="manifest" href="./manifest.json"><script>if('serviceWorker' in navigator){navigator.serviceWorker.register('./sw.js');}</script>"""
+#    components.html(pwa_html, height=0)
 
 inject_pwa()
 
