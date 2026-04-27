@@ -294,37 +294,59 @@ if not df.empty:
 
     with tabs[4]: # OCR Referti
         st.subheader("📂 Analisi Specifica Referto")
-        fup = st.file_uploader("Carica PDF o scatta foto", type=["pdf", "jpg", "jpeg", "png"], key="scanner_v3")
+        fup = st.file_uploader("Carica PDF o scatta foto", type=["pdf", "jpg", "jpeg", "png"], key="scanner_v4")
         
         if fup is not None:
-            if st.button("🚀 Analizza Referto"):
-                with st.spinner("Analisi clinica del documento..."):
-                    # 1. Estrazione testo (OCR o Vision)
-                    if fup.type == "application/pdf":
-                        raw_text = extract_text_from_pdf(fup)
-                    else:
-                        base64_img = base64.b64encode(fup.getvalue()).decode('utf-8')
-                        raw_text = get_ai_vision_analysis(base64_img)
-                    
-                    # 2. Analisi ISOLATA del referto (usando la nuova funzione)
-                    st.session_state.rep_ai = get_standalone_report_analysis(raw_text)
-                    
-                    # 3. Salvataggio su Supabase (salviamo sia il testo grezzo che l'analisi)
-                    supabase.table("referti_medici").insert({
-                        "nome_referto": fup.name, 
-                        "data_esame": str(datetime.now().date()), 
-                        "file_path": base64.b64encode(fup.getvalue()).decode('utf-8'), 
-                        "note": raw_text,
-                        "analisi_ia": st.session_state.rep_ai # Assicurati che questa colonna esista o salvalo in 'note'
-                    }).execute()
+            if st.button("🚀 Analizza e Salva Referto"):
+                with st.spinner("L'IA sta analizzando il documento clinico..."):
+                    try:
+                        # 1. Estrazione testo (OCR o Vision)
+                        if fup.type == "application/pdf":
+                            raw_text = extract_text_from_pdf(fup)
+                        else:
+                            base64_img = base64.b64encode(fup.getvalue()).decode('utf-8')
+                            raw_text = get_ai_vision_analysis(base64_img)
+                        
+                        # 2. Analisi ISOLATA del referto (solo medica/oggettiva)
+                        analisi_specifica = get_standalone_report_analysis(raw_text)
+                        st.session_state.rep_ai = analisi_specifica
+                        
+                        # 3. Salvataggio nel DB nelle nuove colonne
+                        file_bytes = fup.getvalue()
+                        supabase.table("referti_medici").insert({
+                            "nome_referto": fup.name, 
+                            "data_esame": str(datetime.now().date()), 
+                            "file_path": base64.b64encode(file_bytes).decode('utf-8'), 
+                            "note": raw_text,        # Testo grezzo estratto
+                            "analisi_ia": analisi_specifica # Analisi medica prodotta
+                        }).execute()
+                        
+                        st.success("Referto salvato e analizzato!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Errore nel salvataggio: {e}")
+
+        # Visualizzazione Analisi in tempo reale
+        if "rep_ai" in st.session_state:
+            with st.container(border=True):
+                st.markdown("### 📋 Esito Analisi Referto")
+                st.write(st.session_state.rep_ai)
+                if st.button("Chiudi e torna all'elenco"):
+                    del st.session_state.rep_ai
                     st.rerun()
 
-        if "rep_ai" in st.session_state:
-            st.markdown("### 📋 Risultato Ecografia/Referto")
-            st.info(st.session_state.rep_ai) # Questa sarà l'analisi specifica dell'ecografia
-            if st.button("OK, ho letto"):
-                del st.session_state.rep_ai
-                st.rerun()
+        st.divider()
+        st.subheader("📜 Archivio Referti")
+        # Visualizzazione della lista aggiornata
+        docs = supabase.table("referti_medici").select("*").order("data_esame", desc=True).execute().data
+        for d in (docs or []):
+            with st.expander(f"📄 {d['data_esame']} - {d['nome_referto']}"):
+                # Mostriamo l'analisi IA se presente, altrimenti le note
+                testo_da_mostrare = d.get('analisi_ia') or d.get('note') or "Nessun dato"
+                st.info(testo_da_mostrare)
+                
+                if d.get('file_path'):
+                    st.download_button("📥 Scarica Originale", base64.b64decode(d['file_path']), file_name=d['nome_referto'], key=f"dl_{d['id']}")
 
     with tabs[5]: # Profilo (Nuovo)
         st.subheader("👤 Profilo Clinico")
