@@ -84,38 +84,66 @@ def get_ai_analysis(df, context="", is_report=False):
 def export_pdf(df, ai_comment):
     pdf = FPDF()
     pdf.add_page()
+    
+    # Intestazione
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, clean_text("Report Clinico - Sanity Diary"), ln=True, align="C")
+    pdf.cell(0, 10, clean_text("REPORT CLINICO - SANITY DIARY"), ln=True, align="C")
+    pdf.set_font("Arial", "I", 10)
+    pdf.cell(0, 10, f"Generato il: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True, align="C")
     pdf.ln(5)
-    pdf.set_fill_color(245, 245, 245)
+    
+    # 1. ANALISI IA
+    pdf.set_fill_color(240, 240, 240)
     pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, " Analisi Assistente IA", ln=True, fill=True)
+    pdf.cell(0, 10, " 1. Analisi Specialistica (AI)", ln=True, fill=True)
     pdf.set_font("Arial", "", 10)
     pdf.multi_cell(0, 7, clean_text(ai_comment))
     pdf.ln(10)
     
+    # 2. TABELLA DATI (COMPATTA)
     pdf.set_fill_color(230, 240, 255)
-    pdf.set_font("Arial", "B", 8)
-    w_data, w_param, w_press, w_peso, w_note = 30, 12, 18, 12, 90
-    pdf.cell(w_data, 10, "Data Ora", 1, 0, "C", True)
-    pdf.cell(w_param, 10, "O2", 1, 0, "C", True)
-    pdf.cell(w_param, 10, "BPM", 1, 0, "C", True)
-    pdf.cell(w_param, 10, "T C", 1, 0, "C", True)
-    pdf.cell(w_press, 10, "Press", 1, 0, "C", True)
-    pdf.cell(w_peso, 10, "Peso", 1, 0, "C", True)
-    pdf.cell(w_note, 10, "Note", 1, 0, "C", True)
+    pdf.set_font("Arial", "B", 11)
+    pdf.cell(0, 10, " 2. Riepilogo Parametri Vitali", ln=True, fill=True)
+    pdf.ln(2)
+    
+    pdf.set_font("Arial", "B", 9)
+    w = [35, 20, 20, 20, 30, 25] 
+    headers = ["Data Ora", "O2%", "BPM", "Temp", "Pressione", "Peso"]
+    for i, h in enumerate(headers):
+        pdf.cell(w[i], 8, h, 1, 0, "C", True)
     pdf.ln()
     
-    pdf.set_font("Arial", "", 8)
-    for _, r in df.sort_values(by='created_at', ascending=False).iterrows():
-        lh = 6 # line height
-        pdf.cell(w_data, lh, r['created_at'].strftime('%d/%m/%y %H:%M'), 1)
-        pdf.cell(w_param, lh, str(r.get('oxygen','-')), 1, 0, "C")
-        pdf.cell(w_param, lh, str(r.get('bpm','-')), 1, 0, "C")
-        pdf.cell(w_param, lh, str(r.get('temperature','-')), 1, 0, "C")
-        pdf.cell(w_press, lh, f"{r.get('systolic','-')}/{r.get('diastolic','-')}", 1, 0, "C")
-        pdf.cell(w_peso, lh, str(r.get('weight','-')), 1, 0, "C")
-        pdf.multi_cell(w_note, lh, clean_text(str(r.get('notes',''))), 1)
+    pdf.set_font("Arial", "", 9)
+    df_sorted = df.sort_values(by='created_at', ascending=False)
+    for _, r in df_sorted.iterrows():
+        pdf.cell(w[0], 7, r['created_at'].strftime('%d/%m/%y %H:%M'), 1, 0, "C")
+        pdf.cell(w[1], 7, f"{r.get('oxygen','-')}%", 1, 0, "C")
+        pdf.cell(w[2], 7, str(r.get('bpm','-')), 1, 0, "C")
+        pdf.cell(w[3], 7, f"{r.get('temperature','-')}C", 1, 0, "C")
+        pdf.cell(w[4], 7, f"{r.get('systolic','-')}/{r.get('diastolic','-')}", 1, 0, "C")
+        pdf.cell(w[5], 7, f"{r.get('weight','-')}kg", 1, 0, "C")
+        pdf.ln()
+
+    # 3. SEZIONE NOTE SEPARATA
+    pdf.add_page()
+    pdf.set_fill_color(230, 255, 230)
+    pdf.set_font("Arial", "B", 11)
+    pdf.cell(0, 10, " 3. Diario delle Note e Osservazioni", ln=True, fill=True)
+    pdf.ln(4)
+
+    for _, r in df_sorted.iterrows():
+        nota = r.get('notes', '')
+        if nota and str(nota).strip() != "" and str(nota).lower() != "nan":
+            pdf.set_font("Arial", "B", 9)
+            pdf.set_text_color(50, 50, 50)
+            pdf.cell(0, 6, f"Data: {r['created_at'].strftime('%d/%m/%Y %H:%M')}", ln=True)
+            pdf.set_font("Arial", "", 10)
+            pdf.set_text_color(0, 0, 0)
+            pdf.multi_cell(0, 6, clean_text(str(nota)))
+            pdf.ln(2)
+            pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+            pdf.ln(3)
+            
     return pdf.output(dest='S').encode('latin-1')
 
 # --- 5. LOGICA APPLICATIVA ---
@@ -134,6 +162,7 @@ res = supabase.table("health_logs").select("*").order("created_at").execute()
 df = pd.DataFrame(res.data) if res.data else pd.DataFrame()
 
 if not df.empty:
+    # FIX DATE UNIVERSALE
     df['created_at'] = pd.to_datetime(df['created_at'], format='mixed', errors='coerce').dt.tz_localize(None)
     df = df.dropna(subset=['created_at']).sort_values('created_at')
 
@@ -148,6 +177,7 @@ try:
 except: pass
 
 if not df.empty:
+    # DASHBOARD
     m = st.columns(4)
     def get_d(c):
         v = df[c].dropna()
@@ -222,7 +252,7 @@ if not df.empty:
     with tabs[5]:
         st.subheader("📋 Registro")
         pdf_rep = export_pdf(df, st.session_state.get("ai_text", "Generare analisi."))
-        st.download_button("📥 Scarica Report PDF", pdf_rep, "report.pdf", "application/pdf")
+        st.download_button("📥 Scarica Report PDF per il Medico", pdf_rep, "report_clinico.pdf", "application/pdf")
         st.dataframe(df.sort_values('created_at', ascending=False), use_container_width=True)
 else:
     st.info("Inserisci una misura nella sidebar.")
