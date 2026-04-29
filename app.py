@@ -306,7 +306,16 @@ if not df.empty:
     m[3].metric("Peso", f"{df['weight'].iloc[-1]}kg", get_delta('weight'))
 
     st.divider()
-    tabs = st.tabs(["📈 Trend", "🧬 Statistiche", "🤖 Assistente IA", "📅 Visite", "📂 Referti (OCR)", "👤 Profilo", "📋 Registro"])
+    tabs = st.tabs([
+        "📈 Trend", 
+        "🧬 Statistiche", 
+        "🤖 Assistente IA", 
+        "📅 Visite", 
+        "📂 Referti (OCR)", 
+        "📞 Contatti",
+        "👤 Profilo", 
+        "📋 Registro"
+    ])
 
     with tabs[0]: # Trend
         st.plotly_chart(px.line(df, x='created_at', y=['oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature'], markers=True, template="plotly_white"), use_container_width=True)
