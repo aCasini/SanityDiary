@@ -312,9 +312,9 @@ if not df.empty:
         "🤖 Assistente IA", 
         "📅 Visite", 
         "📂 Referti (OCR)", 
-        "📞 Contatti",
         "👤 Profilo", 
-        "📋 Registro"
+        "📋 Registro",
+        "📞 Contatti"
     ])
 
     with tabs[0]: # Trend
