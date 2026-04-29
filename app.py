@@ -427,6 +427,63 @@ if not df.empty:
         pdf_rep = export_pdf(df, profile, ai_rep)
         st.download_button("📥 Scarica Report PDF", pdf_rep, "report.pdf", "application/pdf")
         st.dataframe(df.sort_values('created_at', ascending=False), use_container_width=True)
+
+    with tabs[7]: # Nuovo Tab: Contatti Medici
+        st.subheader("📞 Rubrica Medica Specialistica")
+        
+        # Form per aggiungere un nuovo contatto
+        with st.expander("➕ Aggiungi Nuovo Medico/Contatto"):
+            with st.form("nuovo_contatto", clear_on_submit=True):
+                c1, c2 = st.columns(2)
+                nome_m = c1.text_input("Nome e Cognome")
+                ruolo_m = c2.text_input("Specializzazione (es. Cardiologo)")
+                mail_m = c1.text_input("Email")
+                tel_m = c2.text_input("Telefono")
+                note_m = st.text_area("Note (es. Orari studio, Indirizzo)")
+                
+                if st.form_submit_button("Salva Contatto"):
+                    if nome_m:
+                        supabase.table("contatti_medici").insert({
+                            "nome_medico": nome_m,
+                            "ruolo": ruolo_m,
+                            "email": mail_m,
+                            "telefono": tel_m,
+                            "note": note_m
+                        }).execute()
+                        st.success(f"Contatto di {nome_m} salvato!")
+                        st.rerun()
+                    else:
+                        st.error("Il nome è obbligatorio.")
+
+        st.divider()
+
+        # Visualizzazione Contatti
+        contatti_res = supabase.table("contatti_medici").select("*").order("nome_medico").execute()
+        contatti = contatti_res.data if contatti_res.data else []
+
+        if not contatti:
+            st.info("La rubrica è vuota.")
+        else:
+            for c in contatti:
+                with st.container(border=True):
+                    col_info, col_azioni = st.columns([3, 1])
+                    with col_info:
+                        st.markdown(f"### {c['nome_medico']}")
+                        st.caption(f"🧬 {c['ruolo']}")
+                        if c['email']: st.write(f"📧 {c['email']}")
+                        if c['telefono']: st.write(f"📞 **{c['telefono']}**")
+                        if c['note']: st.info(f"📝 {c['note']}")
+                    
+                    with col_azioni:
+                        # Pulsante per eliminare (opzionale)
+                        if st.button("Elimina", key=f"del_c_{c['id']}"):
+                            supabase.table("contatti_medici").delete().eq("id", c['id']).execute()
+                            st.rerun()
+                        
+                        # Link rapidi per smartphone
+                        if c['telefono']:
+                            st.markdown(f'''<a href="tel:{c['telefono']}"><button style="width:100%; border-radius:5px; background-color:#2e7d32; color:white; border:none; padding:5px;">Chiama ora</button></a>''', unsafe_allow_html=True)
+                            
 else:
     st.info("Inserisci una misura nella sidebar.")
 
