@@ -430,12 +430,47 @@ if not df.empty:
                 supabase.table("user_profile").update({"nome_paziente":nome, "quadro_clinico":quadro, "terapia_attuale":terapia, "soglia_ossigeno_min":soglia}).eq("id", 1).execute()
                 st.rerun()
 
+#    with tabs[6]: # Registro & PDF
+#        st.subheader("📋 Registro")
+#        ai_rep = st.session_state.get("ai_text", "Analisi non generata.")
+#        pdf_rep = export_pdf(df, profile, ai_rep)
+#        st.download_button("📥 Scarica Report PDF", pdf_rep, "report.pdf", "application/pdf")
+#        st.dataframe(df.sort_values('created_at', ascending=False), use_container_width=True)
     with tabs[6]: # Registro & PDF
-        st.subheader("📋 Registro")
+        st.subheader("📋 Registro Storico")
+        
+        # 1. Preparazione del PDF
         ai_rep = st.session_state.get("ai_text", "Analisi non generata.")
         pdf_rep = export_pdf(df, profile, ai_rep)
-        st.download_button("📥 Scarica Report PDF", pdf_rep, "report.pdf", "application/pdf")
-        st.dataframe(df.sort_values('created_at', ascending=False), use_container_width=True)
+        st.download_button("📥 Scarica Report Medico PDF", pdf_rep, "report_clinico.pdf", "application/pdf")
+        
+        if not df.empty:
+            # --- MODIFICA QUI PER LA VISUALIZZAZIONE TABELLA ---
+            
+            # Creiamo una copia per la visualizzazione senza toccare i dati originali
+            df_display = df.copy()
+            
+            # Rimuoviamo la colonna 'id' (se esiste)
+            if 'id' in df_display.columns:
+                df_display = df_display.drop(columns=['id'])
+            
+            # Ordiniamo le colonne per mettere 'notes' come ultima
+            # Recuperiamo tutte le colonne tranne 'notes'
+            cols = [c for c in df_display.columns if c != 'notes']
+            # Le riassembliamo mettendo 'notes' in fondo
+            df_display = df_display[cols + ['notes']]
+            
+            # Rinominiamo le colonne per un aspetto più pulito (opzionale)
+            df_display.columns = [c.replace('_', ' ').title() for c in df_display.columns]
+            
+            # Visualizzazione
+            st.dataframe(
+                df_display.sort_values(by=df_display.columns[0], ascending=False), 
+                use_container_width=True,
+                hide_index=True # Nasconde anche l'indice numerico di Streamlit per pulizia massima
+            )
+        else:
+            st.info("Nessun dato registrato.")
 
     with tabs[7]: # Nuovo Tab: Contatti Medici
         st.subheader("📞 Rubrica Medica Specialistica")
