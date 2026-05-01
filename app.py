@@ -537,7 +537,69 @@ if not df.empty:
         else:
             st.info("Nessun dato registrato.")
 
-    with tabs[7]: # Nuovo Tab: Contatti Medici
+    with tabs[7]: # Sezione Contatti & Q&A
+        st.subheader("📞 Rubrica e Domande per i Medici")
+        
+        # --- PARTE ESISTENTE: RUBRICA (Omettiamo per brevità) ---
+        # ... (codice contatti già inserito) ...
+
+        st.divider()
+        
+        # --- NUOVA SEZIONE: Q&A ---
+        st.subheader("❓ Le mie Domande")
+        
+        # 🤖 Suggeritore Automatico (Logica AI)
+        if st.button("🪄 Suggerisci domande basate sull'ultima analisi"):
+            if "ai_text" in st.session_state:
+                with st.spinner("L'IA sta elaborando i punti critici..."):
+                    prompt_suggerimenti = f"""
+                    In base a questa analisi clinica: {st.session_state.ai_text}
+                    Genera 3 domande brevi e precise che il paziente dovrebbe fare al suo specialista.
+                    Usa un linguaggio tecnico ma chiaro.
+                    """
+                    suggerimenti = client_ai.chat.completions.create(
+                        model="gpt-4o",
+                        messages=[{"role": "user", "content": prompt_suggerimenti}]
+                    ).choices[0].message.content
+                    st.info(suggerimenti)
+            else:
+                st.warning("Esegui prima un'Analisi Professionale nel Tab Assistente IA.")
+
+        # Input Nuova Domanda
+        with st.form("form_domanda", clear_on_submit=True):
+            nuova_q = st.text_input("Cosa vuoi chiedere al medico?")
+            c1, c2 = st.columns(2)
+            med_dest = c1.selectbox("Per quale specialista?", [c['nome_medico'] for c in contatti] if contatti else ["Generale"])
+            is_urg = c2.checkbox("Segna come urgente ⚠️")
+            
+            if st.form_submit_button("Aggiungi al Promemoria"):
+                if nuova_q:
+                    supabase.table("domande_medici").insert({
+                        "domanda": nuova_q,
+                        "medico_destinatario": med_dest,
+                        "urgente": is_urg
+                    }).execute()
+                    st.rerun()
+
+        # Lista Domande Salvate
+        st.write("---")
+        qs = supabase.table("domande_medici").select("*").order("urgente", desc=True).execute().data
+        for q in (qs or []):
+            prefisso = "🔴" if q['urgente'] else "⚪"
+            with st.expander(f"{prefisso} {q['domanda']}"):
+                st.caption(f"Destinatario: {q['medico_destinatario']}")
+                risposta = st.text_area("Risposta del medico (segna qui durante la visita):", value=q.get('risposta', ''), key=f"ans_{q['id']}")
+                
+                c_a, c_b = st.columns(2)
+                if c_a.button("Salva Risposta", key=f"save_ans_{q['id']}"):
+                    supabase.table("domande_medici").update({"risposta": risposta}).eq("id", q['id']).execute()
+                    st.success("Risposta salvata!")
+                
+                if c_b.button("Elimina Domanda", key=f"del_q_{c['id']}"):
+                    supabase.table("domande_medici").delete().eq("id", q['id']).execute()
+                    st.rerun()
+
+    with tabs[8]: # Nuovo Tab: Contatti Medici
         st.subheader("📞 Rubrica Medica Specialistica")
         
         # Form per aggiungere un nuovo contatto
