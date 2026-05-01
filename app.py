@@ -379,6 +379,7 @@ if not df.empty:
         "📂 Referti (OCR)", 
         "👤 Profilo", 
         "📋 Registro",
+        "Q&A",
         "📞 Contatti"
     ])
 
