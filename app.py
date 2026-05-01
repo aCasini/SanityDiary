@@ -127,24 +127,38 @@ def get_ai_analysis(df, profile, context="", is_report=False):
             referti_context = "Nessun referto recente in archivio."
     except:
         referti_context = "Errore nel recupero storico referti."
+    sys_prompt = f"""
+    Sei un Medico Specialista coordinatore. La tua analisi deve seguire questi passaggi:
+    
+    1. CORRELAZIONE REFERTI-PARAMETRI: Verifica se gli esiti degli ultimi referti (es: {referti_context}) 
+       possono spiegare le anomalie nei parametri recenti ({data_summary}).
+       
+    2. VERIFICA TERAPEUTICA: Incrocia i dati con la terapia attuale ({profile['terapia_attuale']}). 
+       I farmaci stanno avendo l'effetto atteso o i parametri mostrano una resistenza?
+    
+    3. ANALISI DELLE NOTE: Le note dell'utente suggeriscono fattori di stress, errori nell'assunzione 
+       dei farmaci o sintomi premonitori?
+    
+    4. CONCLUSIONE OGGETTIVA: Non fare diagnosi definitive, ma indica 'Segnali di Stabilità' 
+       o 'Segnali di Attenzione' da riferire allo specialista [Contatti].
+    """
+#    sys_prompt = f"""Sei un Medico Specialista in Medicina Interna e Diagnostica.
+#    Il tuo compito è fornire un'analisi clinica oggettiva e completa per il paziente {profile['nome_paziente']}.
+    
+#    PROFILO CLINICO FISSO: {profile['quadro_clinico']}
+#    TERAPIA IN CORSO: {profile['terapia_attuale']}
+    
+#    DATI A TUA DISPOSIZIONE:
+ #   1. TREND PARAMETRI (Ultimi giorni): 
+ #   {data_summary}
+    
+ #   2. STORICO REFERTI (Ecografie, RX, Analisi):
+ #   {referti_context}
 
-    sys_prompt = f"""Sei un Medico Specialista in Medicina Interna e Diagnostica.
-    Il tuo compito è fornire un'analisi clinica oggettiva e completa per il paziente {profile['nome_paziente']}.
-    
-    PROFILO CLINICO FISSO: {profile['quadro_clinico']}
-    TERAPIA IN CORSO: {profile['terapia_attuale']}
-    
-    DATI A TUA DISPOSIZIONE:
-    1. TREND PARAMETRI (Ultimi giorni): 
-    {data_summary}
-    
-    2. STORICO REFERTI (Ecografie, RX, Analisi):
-    {referti_context}
-
-    OBIETTIVO:
-    - Analizza se i parametri numerici attuali sono coerenti con i referti medici.
-    - Se l'utente segnala nuovi sintomi nel 'CONTESTO', verifica se possono essere collegati ai referti archiviati (es: un dolore addominale collegato a un'ecografia specifica).
-    - Fornisci una valutazione professionale, oggettiva e strutturata in: 'Sintesi Clinica Integrata', 'Correlazione Parametri-Referti' e 'Suggerimenti di Monitoraggio'."""
+ #   OBIETTIVO:
+ #   - Analizza se i parametri numerici attuali sono coerenti con i referti medici.
+ #   - Se l'utente segnala nuovi sintomi nel 'CONTESTO', verifica se possono essere collegati ai referti archiviati (es: un dolore addominale collegato a un'ecografia specifica).
+ #   - Fornisci una valutazione professionale, oggettiva e strutturata in: 'Sintesi Clinica Integrata', 'Correlazione Parametri-Referti' e 'Suggerimenti di Monitoraggio'."""
 
     prompt = f"[CONTESTO ATTUALE RIFERITO DALL'UTENTE]: {context if context else 'Nessuna nota specifica oggi.'}"
     
