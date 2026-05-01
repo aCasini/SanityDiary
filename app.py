@@ -127,33 +127,39 @@ def get_ai_analysis(df, profile, context="", is_report=False):
             referti_context = "Nessun referto recente in archivio."
     except:
         referti_context = "Errore nel recupero storico referti."
+
+    # 1. Esecuzione ricerca online basata sui sintomi attuali e quadro clinico
+    search_query = f"linee guida mediche 2026 per {profile['quadro_clinico']} con sintomi {context}"
+    web_results = google_search_tool(search_query) # L'IA cercherà attivamente online
+    
     sys_prompt = f"""
-    Sei un Medico Specialista coordinatore. La tua analisi deve seguire questi passaggi:
+    Sei un Senior Medical Consultant. Analizza il caso clinico integrando evidenze interne ed esterne.
     
-    1. CORRELAZIONE REFERTI-PARAMETRI: Verifica se gli esiti degli ultimi referti (es: {referti_context}) 
-       possono spiegare le anomalie nei parametri recenti ({data_summary}).
-       
-    2. VERIFICA TERAPEUTICA: Incrocia i dati con la terapia attuale ({profile['terapia_attuale']}). 
-       I farmaci stanno avendo l'effetto atteso o i parametri mostrano una resistenza?
+    DATI PAZIENTE: {profile}
+    REFERTI RECENTI: {referti_data}
+    PARAMETRI ATTUALI: {df.tail(5)}
     
-    3. ANALISI DELLE NOTE: Le note dell'utente suggeriscono fattori di stress, errori nell'assunzione 
-       dei farmaci o sintomi premonitori?
+    DOCUMENTAZIONE SCIENTIFICA RECENTE (2026): {web_results}
     
-    4. CONCLUSIONE OGGETTIVA: Non fare diagnosi definitive, ma indica 'Segnali di Stabilità' 
-       o 'Segnali di Attenzione' da riferire allo specialista [Contatti].
+    Svolgi l'analisi seguendo questo rigore:
+    1. VALUTAZIONE CLINICA: Analisi tecnica dei parametri rispetto al profilo.
+    2. CORRELAZIONE SCIENTIFICA: Confronta i dati del paziente con la letteratura medica trovata online.
+    3. RAGIONAMENTO DIFFERENZIALE: Considera ipotesi alternative basate sui sintomi riportati nelle note.
+    4. LIVELLO DI ATTENZIONE: Definisci uno score di urgenza da 1 a 10.
     """
+    
 #    sys_prompt = f"""Sei un Medico Specialista in Medicina Interna e Diagnostica.
-#    Il tuo compito è fornire un'analisi clinica oggettiva e completa per il paziente {profile['nome_paziente']}.
+#    I#l tuo compito è fornire un'analisi clinica oggettiva e completa per il paziente {profile['nome_paziente']}.
     
 #    PROFILO CLINICO FISSO: {profile['quadro_clinico']}
 #    TERAPIA IN CORSO: {profile['terapia_attuale']}
     
 #    DATI A TUA DISPOSIZIONE:
- #   1. TREND PARAMETRI (Ultimi giorni): 
- #   {data_summary}
+#    1. TREND PARAMETRI (Ultimi giorni): 
+#    {data_summary}
     
- #   2. STORICO REFERTI (Ecografie, RX, Analisi):
- #   {referti_context}
+#    2. STORICO REFERTI (Ecografie, RX, Analisi):
+#    {referti_context}
 
  #   OBIETTIVO:
  #   - Analizza se i parametri numerici attuali sono coerenti con i referti medici.
