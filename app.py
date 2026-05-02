@@ -406,7 +406,8 @@ if not df.empty:
         if st.button("🚀 Avvia Analisi Integrata"):
             with st.spinner("L'IA sta incrociando i tuoi parametri con lo storico dei referti..."):
                 # Ora get_ai_analysis farà tutto il lavoro di recupero referti internamente
-                st.session_state.ai_text = get_professional_ai_analysis(df, profile, exc)
+                #st.session_state.ai_text = get_professional_ai_analysis(df, profile, exc)
+                st.session_state.ai_text = get_ai_analysis(df, profile, exc)
         
         if "ai_text" in st.session_state:
             st.container(border=True).markdown(st.session_state.ai_text)
