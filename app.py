@@ -358,7 +358,6 @@ try:
         # MODIFICA LA RIGA QUI SOTTO:
         st.warning(f"📅 **Prossima Visita:** {vn['nome_visita']} il {vn['data_visita']} presso {vn.get('luogo', 'Luogo non specificato')}")
 except: pass
-except: pass
 
 if not df.empty:
     # DASHBOARD METRICS CON DELTA (Ripristinato)
