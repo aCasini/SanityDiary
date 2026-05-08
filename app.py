@@ -350,11 +350,14 @@ if not df.empty:
 st.title("🩺 Sanity Diary Intelligence")
 
 # Banner Visite (Ripristinato)
+# Cerca questa sezione nel file app.py:
 try:
     v_res = supabase.table("visite_mediche").select("*").eq("completata", False).order("data_visita").execute()
     if v_res.data:
         vn = v_res.data[0]
-        st.warning(f"📅 **Prossima Visita:** {vn['nome_visita']} il {vn['data_visita']}")
+        # MODIFICA LA RIGA QUI SOTTO:
+        st.warning(f"📅 **Prossima Visita:** {vn['nome_visita']} il {vn['data_visita']} presso {vn.get('luogo', 'Luogo non specificato')}")
+except: pass
 except: pass
 
 if not df.empty:
