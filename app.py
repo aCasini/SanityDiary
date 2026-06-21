@@ -28,14 +28,12 @@ def inject_pwa():
     """
     components.html(pwa_html, height=0)
 
-#def inject_pwa():
-#    pwa_html = """<link rel="manifest" href="./manifest.json"><script>if('serviceWorker' in navigator){navigator.serviceWorker.register('./sw.js');}</script>"""
-#    components.html(pwa_html, height=0)
-
 inject_pwa()
 
 # --- 2. AUTHENTICATION ---
-if "authenticated" not in st.session_state: st.session_state.authenticated = False
+if "authenticated" not in st.session_state: 
+    st.session_state.authenticated = False
+
 if not st.session_state.authenticated:
     st.title("🔐 Accesso Riservato")
     with st.form("login"):
@@ -44,7 +42,8 @@ if not st.session_state.authenticated:
             if password == st.secrets.get("APP_PASSWORD"):
                 st.session_state.authenticated = True
                 st.rerun()
-            else: st.error("Password errata")
+            else: 
+                st.error("Password errata")
     st.stop()
 
 # --- 3. CONNESSIONE ---
@@ -52,8 +51,12 @@ if not st.session_state.authenticated:
 def init_db():
     return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
-supabase = init_db()
-client_ai = OpenAI(api_key=st.secrets.get("OPENAI_API_KEY"))
+try:
+    supabase = init_db()
+    client_ai = OpenAI(api_key=st.secrets.get("OPENAI_API_KEY"))
+except Exception as e:
+    st.error(f"Errore di configurazione dei servizi esterni (Supabase/OpenAI): {e}")
+    st.stop()
 
 # --- 4. FUNZIONI CORE ---
 def clean_text_for_pdf(text):
@@ -95,7 +98,7 @@ def get_standalone_report_analysis(report_text):
 def get_ai_vision_analysis(base64_image):
     try:
         response = client_ai.chat.completions.create(
-            model="gpt-4o", # Modello con capacità visive
+            model="gpt-4o", 
             messages=[
                 {
                     "role": "user",
@@ -112,6 +115,9 @@ def get_ai_vision_analysis(base64_image):
         return f"Errore Vision: {e}"
 
 def get_ai_analysis(df, profile, context="", is_report=False):
+    if df.empty:
+        return "Nessun dato numerico disponibile per l'analisi."
+        
     # 1. Recupero dati numerici recenti
     recent = df.sort_values(by='created_at', ascending=False).head(12)
     data_summary = recent.to_string(columns=['created_at', 'oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature', 'notes'])
@@ -129,7 +135,7 @@ def get_ai_analysis(df, profile, context="", is_report=False):
         referti_context = "Errore nel recupero storico referti."
     
     sys_prompt = f"""Sei un Medico Specialista in Medicina Interna e Diagnostica.
-    I#l tuo compito è fornire un'analisi clinica oggettiva e completa per il paziente {profile['nome_paziente']}.
+    Il tuo compito è fornire un'analisi clinica oggettiva e completa per il paziente {profile['nome_paziente']}.
     
     PROFILO CLINICO FISSO: {profile['quadro_clinico']}
     TERAPIA IN CORSO: {profile['terapia_attuale']}
@@ -150,119 +156,9 @@ def get_ai_analysis(df, profile, context="", is_report=False):
     
     try:
         response = client_ai.chat.completions.create(
-            model="gpt-4o", # GPT-4o è fondamentale qui per la capacità di sintesi medica
+            model="gpt-4o", 
             messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": prompt}],
             temperature=0.3
-        )
-        return response.choices[0].message.content
-    except Exception as e: return f"Errore AI: {e}"
-
-def get_professional_ai_analysis(df, profile, user_context=""):
-    # 1. Recupero Dati Numerici (ultimi 14 record per vedere i trend)
-    recent_data = df.sort_values(by='created_at', ascending=False).head(14)
-    data_summary = recent_data.to_string(columns=['created_at', 'oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature', 'notes'])
-    
-    # 2. Recupero Referti (ultimi 3 per contesto clinico)
-    try:
-        ref_res = supabase.table("referti_medici").select("data_esame, nome_referto, analisi_ia").order("data_esame", desc=True).limit(3).execute()
-        referti_context = "\n".join([f"- {r['data_esame']}: {r['nome_referto']} -> {r['analisi_ia']}" for r in ref_res.data]) if ref_res.data else "Nessun referto disponibile."
-    except:
-        referti_context = "Errore recupero referti."
-
-    # 3. LOGICA DI RICERCA ONLINE (Simulata tramite capacità interna del modello 2026)
-    # L'IA userà le informazioni per cercare linee guida (es. ESC, AHA, ERS)
-    
-    sys_prompt = f"""Sei un Senior Medical Consultant esperto in Diagnostica Integrata. 
-    Il tuo obiettivo è fornire un'analisi clinica di alto livello per il paziente {profile['nome_paziente']}.
-
-    QUADRO CLINICO DI BASE: {profile['quadro_clinico']}
-    TERAPIA ATTUALE: {profile['terapia_attuale']}
-
-    DATI DA ANALIZZARE:
-    --- PARAMETRI RECENTI ---
-    {data_summary}
-    
-    --- STORICO REFERTI SPECIALISTICI ---
-    {referti_context}
-    
-    --- CONTESTO RIFERITO OGGI ---
-    {user_context if user_context else "Nessuna nota aggiuntiva."}
-
-    ISTRUZIONI PROFESSIONALI:
-    1. CORRELAZIONE CLINICA: Incrocia i parametri numerici con i referti. (Esempio: se l'ecografia mostra ipertrofia, valuta con estrema attenzione i picchi di pressione).
-    2. RICERCA EVIDENZE: Agisci come se avessi consultato le linee guida mediche aggiornate al 2026. Cita standard internazionali (es. 'Secondo i protocolli ESC...').
-    3. ANALISI DEI TREND: Non guardare solo l'ultimo dato. Identifica se c'è un peggioramento o una stabilità.
-    4. LINGUAGGIO: Usa terminologia medica corretta ma resta comprensibile.
-    
-    STRUTTURA REPORT:
-    ## 🩺 Sintesi Diagnostica Integrata
-    (Un riassunto che correla tutto il quadro)
-    
-    ## 📚 Evidenze e Linee Guida (Ricerca 2026)
-    (Confronto dei dati del paziente con la letteratura medica attuale)
-    
-    ## ⚠️ Segnali di Attenzione e Monitoraggio
-    (Cosa tenere d'occhio e perché)
-    
-    ## 📋 Nota per il Medico Curante
-    (Una frase tecnica da riferire allo specialista)
-    """
-
-    try:
-        # Nota: Usiamo GPT-4o per la massima capacità di ragionamento
-        response = client_ai.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": "Genera l'analisi professionale basata sui dati caricati."}
-            ],
-            temperature=0.3 # Bassa temperatura per massima precisione e rigore
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"Errore nell'analisi professionale: {e}"
-
-def OLD_get_ai_analysis(df, profile, context="", is_report=False):
-    # Selezione dati per analisi di trend
-    recent = df.sort_values(by='created_at', ascending=False).head(12)
-    data_summary = recent.to_string(columns=['created_at', 'oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature', 'notes'])
-    
-    sys_prompt = f"""Sei un Medico Specialista esperto in Diagnostica e Medicina Interna.
-    Il tuo obiettivo è fornire un'analisi clinica oggettiva, professionale e basata su evidenze per il paziente {profile['nome_paziente']}.
-    
-    PROFILO CLINICO NOTO:
-    - Quadro: {profile['quadro_clinico']}
-    - Terapia: {profile['terapia_attuale']}
-    - Soglia O2: {profile['soglia_ossigeno_min']}%
-
-    LINEE GUIDA PER L'ANALISI:
-    1. APPROCCIO ANALITICO: Valuta i dati numerici cercando correlazioni (es. rapporto tra BPM e Saturazione o Pressione Differenziale).
-    2. DIAGNOSI DIFFERENZIALE: Se l'utente riporta sintomi nel 'CONTESTO', incrociali con i dati e cita possibili quadri clinici simili o patologie che presentano pattern analoghi, basandoti sulla letteratura medica.
-    3. VALUTAZIONE DEI RISCHI: Identifica segnali precursori di instabilità clinica.
-    4. LINGUAGGIO: Usa terminologia medica appropriata (es. 'tachicardia compensatoria', 'ipossia lieve', 'iperpiressia', etc.).
-    5. OGGETTIVITÀ: Separa chiaramente i fatti (dati) dalle ipotesi cliniche."""
-
-    prompt = f"""
-    [INPUT UTENTE / SINTOMATOLOGIA]: 
-    "{context if context else 'Nessun sintomo specifico riferito.'}"
-
-    [TREND DATI RECENTI]:
-    {data_summary}
-
-    ISTRUZIONE: Elabora un'analisi strutturata in: 
-    - Valutazione Parametrica (Oggettiva)
-    - Correlazione Clinica e Diagnosi Differenziale (basata su sintomi e letteratura)
-    - Piano di Monitoraggio Suggerito.
-    """
-    
-    try:
-        response = client_ai.chat.completions.create(
-            model="gpt-4o", # Usiamo GPT-4o per una capacità di ragionamento medico superiore
-            messages=[
-                {"role": "system", "content": sys_prompt}, 
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3 # Bassa temperatura per massima oggettività e precisione
         )
         return response.choices[0].message.content
     except Exception as e: return f"Errore AI: {e}"
@@ -292,75 +188,76 @@ def export_pdf(df, profile, ai_comment):
     pdf.multi_cell(0, 5, clean_text_for_pdf(ai_comment))
     pdf.ln(5)
 
-    # Tabella Dati con colonna NOTE ripristinata
-    pdf.set_fill_color(230, 240, 255)
-    pdf.set_font("Arial", "B", 8)
-    
-    # Larghezze colonne regolate per far stare le Note (totale ~190mm)
-    # Data(30), O2(10), BPM(10), Press(18), Temp(10), Peso(12), Note(100)
-    cols = [
-        ("Data Ora", 30), ("O2", 10), ("BPM", 10), 
-        ("Press", 18), ("T C", 10), ("Kg", 12), ("Note/Sintomi", 100)
-    ]
-    
-    for h, w in cols: 
-        pdf.cell(w, 8, h, 1, 0, "C", True)
-    pdf.ln()
-    
-    pdf.set_font("Arial", "", 7) # Font leggermente più piccolo per le note lunghe
-    df_sorted = df.sort_values(by='created_at', ascending=False)
-    
-    for _, r in df_sorted.head(50).iterrows():
-        # Calcoliamo l'altezza della riga in base alla lunghezza della nota
-        nota = str(r.get('notes', '-')) if r.get('notes') else "-"
-        # Pulizia testo
-        nota_clean = clean_text_for_pdf(nota)
+    if not df.empty:
+        # Tabella Dati con colonna NOTE ripristinata
+        pdf.set_fill_color(230, 240, 255)
+        pdf.set_font("Arial", "B", 8)
         
-        # Salviamo la posizione corrente
-        x = pdf.get_x()
-        y = pdf.get_y()
+        cols = [
+            ("Data Ora", 30), ("O2", 10), ("BPM", 10), 
+            ("Press", 18), ("T C", 10), ("Kg", 12), ("Note/Sintomi", 100)
+        ]
         
-        # Stampiamo le celle fisse
-        pdf.cell(30, 6, r['created_at'].strftime('%d/%m/%y %H:%M'), 1)
-        pdf.cell(10, 6, f"{r.get('oxygen','-')}%", 1, 0, "C")
-        pdf.cell(10, 6, str(r.get('bpm','-')), 1, 0, "C")
-        pdf.cell(18, 6, f"{r.get('systolic','-')}/{r.get('diastolic','-')}", 1, 0, "C")
-        pdf.cell(10, 6, str(r.get('temperature','-')), 1, 0, "C")
-        pdf.cell(12, 6, str(r.get('weight','-')), 1, 0, "C")
+        for h, w in cols: 
+            pdf.cell(w, 8, h, 1, 0, "C", True)
+        pdf.ln()
         
-        # Multi_cell per la colonna Note (permette il wrap del testo)
-        pdf.multi_cell(100, 6, nota_clean, 1, "L")
+        pdf.set_font("Arial", "", 7)
+        df_sorted = df.sort_values(by='created_at', ascending=False)
         
+        for _, r in df_sorted.head(50).iterrows():
+            nota = str(r.get('notes', '-')) if r.get('notes') else "-"
+            nota_clean = clean_text_for_pdf(nota)
+            
+            pdf.cell(30, 6, r['created_at'].strftime('%d/%m/%y %H:%M'), 1)
+            pdf.cell(10, 6, f"{r.get('oxygen','-')}%", 1, 0, "C")
+            pdf.cell(10, 6, str(r.get('bpm','-')), 1, 0, "C")
+            pdf.cell(18, 6, f"{r.get('systolic','-')}/{r.get('diastolic','-')}", 1, 0, "C")
+            pdf.cell(10, 6, str(r.get('temperature','-')), 1, 0, "C")
+            pdf.cell(12, 6, str(r.get('weight','-')), 1, 0, "C")
+            
+            pdf.multi_cell(100, 6, nota_clean, 1, "L")
+            
     return pdf.output(dest='S').encode('latin-1')
 
-# --- 5. RECUPERO DATI ---
+# --- 5. RECUPERO DATI (CON GESTIONE ERRORI CONNESSIONE) ---
+db_online = True
+
 try:
     p_res = supabase.table("user_profile").select("*").eq("id", 1).execute()
     profile = p_res.data[0] if p_res.data else {"nome_paziente": "Alessio", "quadro_clinico": "Non configurato", "terapia_attuale": "Non configurata", "soglia_ossigeno_min": 94}
-except:
-    profile = {"nome_paziente": "Alessio", "quadro_clinico": "Errore Tabella", "terapia_attuale": "Configura DB", "soglia_ossigeno_min": 94}
+except Exception as e:
+    profile = {"nome_paziente": "Alessio", "quadro_clinico": "Database Offline", "terapia_attuale": "Database Offline", "soglia_ossigeno_min": 94}
+    db_online = False
 
-res = supabase.table("health_logs").select("*").order("created_at").execute()
-df = pd.DataFrame(res.data) if res.data else pd.DataFrame()
-if not df.empty:
-    df['created_at'] = pd.to_datetime(df['created_at'], format='mixed', errors='coerce').dt.tz_localize(None)
-    df = df.dropna(subset=['created_at']).sort_values('created_at')
+df = pd.DataFrame()
+if db_online:
+    try:
+        res = supabase.table("health_logs").select("*").order("created_at").execute()
+        if res.data:
+            df = pd.DataFrame(res.data)
+            df['created_at'] = pd.to_datetime(df['created_at'], format='mixed', errors='coerce').dt.tz_localize(None)
+            df = df.dropna(subset=['created_at']).sort_values('created_at')
+    except Exception as e:
+        db_online = False
 
 # --- 6. INTERFACCIA ---
 st.title("🩺 Sanity Diary Intelligence")
 
-# Banner Visite (Ripristinato)
-# Cerca questa sezione nel file app.py:
-try:
-    v_res = supabase.table("visite_mediche").select("*").eq("completata", False).order("data_visita").execute()
-    if v_res.data:
-        vn = v_res.data[0]
-        # MODIFICA LA RIGA QUI SOTTO:
-        st.warning(f"📅 **Prossima Visita:** {vn['nome_visita']} il {vn['data_visita']} presso {vn.get('luogo', 'Luogo non specificato')}")
-except: pass
+if not db_online:
+    st.error("⚠️ Errore di connessione a Supabase. Verifica che il progetto non sia in pausa (Paused) nella dashboard di Supabase o che le credenziali nei Secrets siano corrette.")
+
+# Banner Visite
+if db_online:
+    try:
+        v_res = supabase.table("visite_mediche").select("*").eq("completata", False).order("data_visita").execute()
+        if v_res.data:
+            vn = v_res.data[0]
+            st.warning(f"📅 **Prossima Visita:** {vn['nome_visita']} il {vn['data_visita']} presso {vn.get('luogo', 'Luogo non specificato')}")
+    except: pass
 
 if not df.empty:
-    # DASHBOARD METRICS CON DELTA (Ripristinato)
+    # DASHBOARD METRICS CON DELTA
     m = st.columns(4)
     def get_delta(col):
         v = df[col].dropna()
@@ -387,7 +284,7 @@ if not df.empty:
     with tabs[0]: # Trend
         st.plotly_chart(px.line(df, x='created_at', y=['oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature'], markers=True, template="plotly_white"), use_container_width=True)
 
-    with tabs[1]: # Statistiche Pearson (Ripristinato)
+    with tabs[1]: # Statistiche Pearson
         st.subheader("🧬 Studio Correlazioni (Pearson)")
         cd, cm = st.columns([1, 2])
         sc = ['oxygen', 'bpm', 'systolic', 'diastolic', 'weight', 'temperature']
@@ -407,29 +304,34 @@ if not df.empty:
         
         if st.button("🚀 Avvia Analisi Integrata"):
             with st.spinner("L'IA sta incrociando i tuoi parametri con lo storico dei referti..."):
-                # Ora get_ai_analysis farà tutto il lavoro di recupero referti internamente
-                #st.session_state.ai_text = get_professional_ai_analysis(df, profile, exc)
                 st.session_state.ai_text = get_ai_analysis(df, profile, exc)
         
         if "ai_text" in st.session_state:
             st.container(border=True).markdown(st.session_state.ai_text)
 
-    with tabs[3]: # Visite (Ripristinato)
+    with tabs[3]: # Visite
         v1, v2 = st.columns([1, 2])
         with v1:
             with st.form("av"):
                 nv, dv, lv = st.text_input("Visita"), st.date_input("Data"), st.text_input("Luogo")
                 if st.form_submit_button("Salva"):
-                    supabase.table("visite_mediche").insert({"nome_visita":nv, "data_visita":str(dv), "luogo":lv, "completata":False}).execute()
-                    st.rerun()
+                    if db_online:
+                        supabase.table("visite_mediche").insert({"nome_visita":nv, "data_visita":str(dv), "luogo":lv, "completata":False}).execute()
+                        st.rerun()
+                    else:
+                        st.error("Impossibile salvare: database offline.")
         with v2:
-            vd = supabase.table("visite_mediche").select("*").order("data_visita").execute().data
-            for v in (vd or []):
-                ca, cb = st.columns([4, 1])
-                ca.write(f"{'✅' if v['completata'] else '⏳'} **{v['data_visita']}**: {v['nome_visita']}")
-                if not v['completata'] and cb.button("Fatto", key=f"v_{v['id']}"):
-                    supabase.table("visite_mediche").update({"completata":True}).eq("id", v['id']).execute()
-                    st.rerun()
+            if db_online:
+                try:
+                    vd = supabase.table("visite_mediche").select("*").order("data_visita").execute().data
+                    for v in (vd or []):
+                        ca, cb = st.columns([4, 1])
+                        ca.write(f"{'✅' if v['completata'] else '⏳'} **{v['data_visita']}**: {v['nome_visita']}")
+                        if not v['completata'] and cb.button("Fatto", key=f"v_{v['id']}"):
+                            supabase.table("visite_mediche").update({"completata":True}).eq("id", v['id']).execute()
+                            st.rerun()
+                except:
+                    st.write("Impossibile caricare le visite.")
 
     with tabs[4]: # OCR Referti
         st.subheader("📂 Analisi Specifica Referto")
@@ -437,35 +339,34 @@ if not df.empty:
         
         if fup is not None:
             if st.button("🚀 Analizza e Salva Referto"):
-                with st.spinner("L'IA sta analizzando il documento clinico..."):
-                    try:
-                        # 1. Estrazione testo (OCR o Vision)
-                        if fup.type == "application/pdf":
-                            raw_text = extract_text_from_pdf(fup)
-                        else:
-                            base64_img = base64.b64encode(fup.getvalue()).decode('utf-8')
-                            raw_text = get_ai_vision_analysis(base64_img)
-                        
-                        # 2. Analisi ISOLATA del referto (solo medica/oggettiva)
-                        analisi_specifica = get_standalone_report_analysis(raw_text)
-                        st.session_state.rep_ai = analisi_specifica
-                        
-                        # 3. Salvataggio nel DB nelle nuove colonne
-                        file_bytes = fup.getvalue()
-                        supabase.table("referti_medici").insert({
-                            "nome_referto": fup.name, 
-                            "data_esame": str(datetime.now().date()), 
-                            "file_path": base64.b64encode(file_bytes).decode('utf-8'), 
-                            "note": raw_text,        # Testo grezzo estratto
-                            "analisi_ia": analisi_specifica # Analisi medica prodotta
-                        }).execute()
-                        
-                        st.success("Referto salvato e analizzato!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Errore nel salvataggio: {e}")
+                if not db_online:
+                    st.error("Database disconnesso. Impossibile salvare.")
+                else:
+                    with st.spinner("L'IA sta analizzando il documento clinico..."):
+                        try:
+                            if fup.type == "application/pdf":
+                                raw_text = extract_text_from_pdf(fup)
+                            else:
+                                base64_img = base64.b64encode(fup.getvalue()).decode('utf-8')
+                                raw_text = get_ai_vision_analysis(base64_img)
+                            
+                            analisi_specifica = get_standalone_report_analysis(raw_text)
+                            st.session_state.rep_ai = analisi_specifica
+                            
+                            file_bytes = fup.getvalue()
+                            supabase.table("referti_medici").insert({
+                                "nome_referto": fup.name, 
+                                "data_esame": str(datetime.now().date()), 
+                                "file_path": base64.b64encode(file_bytes).decode('utf-8'), 
+                                "note": raw_text,        
+                                "analisi_ia": analisi_specifica 
+                            }).execute()
+                            
+                            st.success("Referto salvato e analizzato!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Errore nel salvataggio: {e}")
 
-        # Visualizzazione Analisi in tempo reale
         if "rep_ai" in st.session_state:
             with st.container(border=True):
                 st.markdown("### 📋 Esito Analisi Referto")
@@ -476,18 +377,19 @@ if not df.empty:
 
         st.divider()
         st.subheader("📜 Archivio Referti")
-        # Visualizzazione della lista aggiornata
-        docs = supabase.table("referti_medici").select("*").order("data_esame", desc=True).execute().data
-        for d in (docs or []):
-            with st.expander(f"📄 {d['data_esame']} - {d['nome_referto']}"):
-                # Mostriamo l'analisi IA se presente, altrimenti le note
-                testo_da_mostrare = d.get('analisi_ia') or d.get('note') or "Nessun dato"
-                st.info(testo_da_mostrare)
-                
-                if d.get('file_path'):
-                    st.download_button("📥 Scarica Originale", base64.b64decode(d['file_path']), file_name=d['nome_referto'], key=f"dl_{d['id']}")
+        if db_online:
+            try:
+                docs = supabase.table("referti_medici").select("*").order("data_esame", desc=True).execute().data
+                for d in (docs or []):
+                    with st.expander(f"📄 {d['data_esame']} - {d['nome_referto']}"):
+                        testo_da_mostrare = d.get('analisi_ia') or d.get('note') or "Nessun dato"
+                        st.info(testo_da_mostrare)
+                        if d.get('file_path'):
+                            st.download_button("📥 Scarica Originale", base64.b64decode(d['file_path']), file_name=d['nome_referto'], key=f"dl_{d['id']}")
+            except:
+                st.write("Impossibile caricare l'archivio.")
 
-    with tabs[5]: # Profilo (Nuovo)
+    with tabs[5]: # Profilo
         st.subheader("👤 Profilo Clinico")
         with st.form("up_p"):
             nome = st.text_input("Nome", profile['nome_paziente'])
@@ -495,55 +397,39 @@ if not df.empty:
             terapia = st.text_area("Terapia", profile['terapia_attuale'])
             soglia = st.number_input("Soglia O2", 80, 100, profile['soglia_ossigeno_min'])
             if st.form_submit_button("Salva Profilo"):
-                supabase.table("user_profile").update({"nome_paziente":nome, "quadro_clinico":quadro, "terapia_attuale":terapia, "soglia_ossigeno_min":soglia}).eq("id", 1).execute()
-                st.rerun()
+                if db_online:
+                    supabase.table("user_profile").update({"nome_paziente":nome, "quadro_clinico":quadro, "terapia_attuale":terapia, "soglia_ossigeno_min":soglia}).eq("id", 1).execute()
+                    st.rerun()
+                else:
+                    st.error("Impossibile salvare le modifiche: database offline.")
 
-#    with tabs[6]: # Registro & PDF
-#        st.subheader("📋 Registro")
-#        ai_rep = st.session_state.get("ai_text", "Analisi non generata.")
-#        pdf_rep = export_pdf(df, profile, ai_rep)
-#        st.download_button("📥 Scarica Report PDF", pdf_rep, "report.pdf", "application/pdf")
-#        st.dataframe(df.sort_values('created_at', ascending=False), use_container_width=True)
     with tabs[6]: # Registro & PDF
         st.subheader("📋 Registro Storico")
         
-        # 1. Preparazione del PDF
         ai_rep = st.session_state.get("ai_text", "Analisi non generata.")
         pdf_rep = export_pdf(df, profile, ai_rep)
         st.download_button("📥 Scarica Report Medico PDF", pdf_rep, "report_clinico.pdf", "application/pdf")
         
         if not df.empty:
-            # --- MODIFICA QUI PER LA VISUALIZZAZIONE TABELLA ---
-            
-            # Creiamo una copia per la visualizzazione senza toccare i dati originali
             df_display = df.copy()
-            
-            # Rimuoviamo la colonna 'id' (se esiste)
             if 'id' in df_display.columns:
                 df_display = df_display.drop(columns=['id'])
             
-            # Ordiniamo le colonne per mettere 'notes' come ultima
-            # Recuperiamo tutte le colonne tranne 'notes'
             cols = [c for c in df_display.columns if c != 'notes']
-            # Le riassembliamo mettendo 'notes' in fondo
             df_display = df_display[cols + ['notes']]
-            
-            # Rinominiamo le colonne per un aspetto più pulito (opzionale)
             df_display.columns = [c.replace('_', ' ').title() for c in df_display.columns]
             
-            # Visualizzazione
             st.dataframe(
                 df_display.sort_values(by=df_display.columns[0], ascending=False), 
                 use_container_width=True,
-                hide_index=True # Nasconde anche l'indice numerico di Streamlit per pulizia massima
+                hide_index=True 
             )
         else:
             st.info("Nessun dato registrato.")
 
-    with tabs[7]: # Nuovo Tab: Contatti Medici
+    with tabs[7]: # Contatti Medici
         st.subheader("📞 Rubrica Medica Specialistica")
         
-        # Form per aggiungere un nuovo contatto
         with st.expander("➕ Aggiungi Nuovo Medico/Contatto"):
             with st.form("nuovo_contatto", clear_on_submit=True):
                 c1, c2 = st.columns(2)
@@ -555,49 +441,55 @@ if not df.empty:
                 
                 if st.form_submit_button("Salva Contatto"):
                     if nome_m:
-                        supabase.table("contatti_medici").insert({
-                            "nome_medico": nome_m,
-                            "ruolo": ruolo_m,
-                            "email": mail_m,
-                            "telefono": tel_m,
-                            "note": note_m
-                        }).execute()
-                        st.success(f"Contatto di {nome_m} salvato!")
-                        st.rerun()
+                        if db_online:
+                            supabase.table("contatti_medici").insert({
+                                "nome_medico": nome_m,
+                                "ruolo": ruolo_m,
+                                "email": mail_m,
+                                "telefono": tel_m,
+                                "note": note_m
+                            }).execute()
+                            st.success(f"Contatto di {nome_m} salvato!")
+                            st.rerun()
+                        else:
+                            st.error("Impossibile salvare: database offline.")
                     else:
                         st.error("Il nome è obbligatorio.")
 
         st.divider()
 
-        # Visualizzazione Contatti
-        contatti_res = supabase.table("contatti_medici").select("*").order("nome_medico").execute()
-        contatti = contatti_res.data if contatti_res.data else []
+        if db_online:
+            try:
+                contatti_res = supabase.table("contatti_medici").select("*").order("nome_medico").execute()
+                contatti = contatti_res.data if contatti_res.data else []
 
-        if not contatti:
-            st.info("La rubrica è vuota.")
-        else:
-            for c in contatti:
-                with st.container(border=True):
-                    col_info, col_azioni = st.columns([3, 1])
-                    with col_info:
-                        st.markdown(f"### {c['nome_medico']}")
-                        st.caption(f"🧬 {c['ruolo']}")
-                        if c['email']: st.write(f"📧 {c['email']}")
-                        if c['telefono']: st.write(f"📞 **{c['telefono']}**")
-                        if c['note']: st.info(f"📝 {c['note']}")
-                    
-                    with col_azioni:
-                        # Pulsante per eliminare (opzionale)
-                        if st.button("Elimina", key=f"del_c_{c['id']}"):
-                            supabase.table("contatti_medici").delete().eq("id", c['id']).execute()
-                            st.rerun()
-                        
-                        # Link rapidi per smartphone
-                        if c['telefono']:
-                            st.markdown(f'''<a href="tel:{c['telefono']}"><button style="width:100%; border-radius:5px; background-color:#2e7d32; color:white; border:none; padding:5px;">Chiama ora</button></a>''', unsafe_allow_html=True)
+                if not contatti:
+                    st.info("La rubrica è vuota.")
+                else:
+                    for c in contatti:
+                        with st.container(border=True):
+                            col_info, col_azioni = st.columns([3, 1])
+                            with col_info:
+                                st.markdown(f"### {c['nome_medico']}")
+                                st.caption(f"🧬 {c['ruolo']}")
+                                if c['email']: st.write(f"📧 {c['email']}")
+                                if c['telefono']: st.write(f"📞 **{c['telefono']}**")
+                                if c['note']: st.info(f"📝 {c['note']}")
                             
+                            with col_azioni:
+                                if st.button("Elimina", key=f"del_c_{c['id']}"):
+                                    supabase.table("contatti_medici").delete().eq("id", c['id']).execute()
+                                    st.rerun()
+                                
+                                if c['telefono']:
+                                    st.markdown(f'''<a href="tel:{c['telefono']}"><button style="width:100%; border-radius:5px; background-color:#2e7d32; color:white; border:none; padding:5px;">Chiama ora</button></a>''', unsafe_allow_html=True)
+            except:
+                st.write("Impossibile caricare i contatti.")
 else:
-    st.info("Inserisci una misura nella sidebar.")
+    if not db_online:
+        st.info("Configura la connessione per inserire nuove misure.")
+    else:
+        st.info("Inserisci una misura nella sidebar.")
 
 # Sidebar Misura (Sempre Attiva)
 with st.sidebar:
@@ -608,5 +500,8 @@ with st.sidebar:
         w, t = st.number_input("Peso", 0.0, 200.0, 80.0), st.number_input("Temp", 30.0, 45.0, 36.5)
         n = st.text_area("Note")
         if st.form_submit_button("Salva"):
-            supabase.table("health_logs").insert({"oxygen":o, "bpm":b, "systolic":s, "diastolic":d, "weight":w, "temperature":t, "notes":n}).execute()
-            st.rerun()
+            if db_online:
+                supabase.table("health_logs").insert({"oxygen":o, "bpm":b, "systolic":s, "diastolic":d, "weight":w, "temperature":t, "notes":n}).execute()
+                st.rerun()
+            else:
+                st.error("Database offline, impossibile salvare la misura.")
