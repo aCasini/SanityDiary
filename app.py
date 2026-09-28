@@ -218,7 +218,8 @@ def export_pdf(df, profile, ai_comment):
             
             pdf.multi_cell(100, 6, nota_clean, 1, "L")
             
-    return pdf.output(dest='S').encode('latin-1')
+    #return pdf.output(dest='S').encode('latin-1')
+    return bytes(pdf.output())
 
 # --- 5. RECUPERO DATI (CON GESTIONE ERRORI CONNESSIONE) ---
 db_online = True
