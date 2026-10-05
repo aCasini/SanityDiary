@@ -188,37 +188,35 @@ def export_pdf(df, profile, ai_comment):
     pdf.multi_cell(0, 5, clean_text_for_pdf(ai_comment))
     pdf.ln(5)
 
-    if not df.empty:
-        # Tabella Dati con colonna NOTE ripristinata
-        pdf.set_fill_color(230, 240, 255)
-        pdf.set_font("Arial", "B", 8)
+    # Tabella Dati
+    pdf.set_fill_color(230, 240, 255)
+    pdf.set_font("Arial", "B", 8)
+    
+    cols = [
+        ("Data Ora", 30), ("O2", 10), ("BPM", 10), 
+        ("Press", 18), ("T C", 10), ("Kg", 12), ("Note/Sintomi", 100)
+    ]
+    
+    for h, w in cols: 
+        pdf.cell(w, 8, h, 1, 0, "C", True)
+    pdf.ln()
+    
+    pdf.set_font("Arial", "", 7)
+    df_sorted = df.sort_values(by='created_at', ascending=False)
+    
+    for _, r in df_sorted.head(50).iterrows():
+        nota = str(r.get('notes', '-')) if r.get('notes') else "-"
+        nota_clean = clean_text_for_pdf(nota)
         
-        cols = [
-            ("Data Ora", 30), ("O2", 10), ("BPM", 10), 
-            ("Press", 18), ("T C", 10), ("Kg", 12), ("Note/Sintomi", 100)
-        ]
+        pdf.cell(30, 6, r['created_at'].strftime('%d/%m/%y %H:%M'), 1)
+        pdf.cell(10, 6, f"{r.get('oxygen','-')}%", 1, 0, "C")
+        pdf.cell(10, 6, str(r.get('bpm','-')), 1, 0, "C")
+        pdf.cell(18, 6, f"{r.get('systolic','-')}/{r.get('diastolic','-')}", 1, 0, "C")
+        pdf.cell(10, 6, str(r.get('temperature','-')), 1, 0, "C")
+        pdf.cell(12, 6, str(r.get('weight','-')), 1, 0, "C")
+        pdf.multi_cell(100, 6, nota_clean, 1, "L")
         
-        for h, w in cols: 
-            pdf.cell(w, 8, h, 1, 0, "C", True)
-        pdf.ln()
-        
-        pdf.set_font("Arial", "", 7)
-        df_sorted = df.sort_values(by='created_at', ascending=False)
-        
-        for _, r in df_sorted.head(50).iterrows():
-            nota = str(r.get('notes', '-')) if r.get('notes') else "-"
-            nota_clean = clean_text_for_pdf(nota)
-            
-            pdf.cell(30, 6, r['created_at'].strftime('%d/%m/%y %H:%M'), 1)
-            pdf.cell(10, 6, f"{r.get('oxygen','-')}%", 1, 0, "C")
-            pdf.cell(10, 6, str(r.get('bpm','-')), 1, 0, "C")
-            pdf.cell(18, 6, f"{r.get('systolic','-')}/{r.get('diastolic','-')}", 1, 0, "C")
-            pdf.cell(10, 6, str(r.get('temperature','-')), 1, 0, "C")
-            pdf.cell(12, 6, str(r.get('weight','-')), 1, 0, "C")
-            
-            pdf.multi_cell(100, 6, nota_clean, 1, "L")
-            
-    #return pdf.output(dest='S').encode('latin-1')
+    # Ritorna i byte direttamente (funziona con fpdf2)
     return bytes(pdf.output())
 
 # --- 5. RECUPERO DATI (CON GESTIONE ERRORI CONNESSIONE) ---
