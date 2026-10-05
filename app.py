@@ -216,8 +216,11 @@ def export_pdf(df, profile, ai_comment):
         pdf.cell(12, 6, str(r.get('weight','-')), 1, 0, "C")
         pdf.multi_cell(100, 6, nota_clean, 1, "L")
         
-    # Ritorna i byte direttamente (funziona con fpdf2)
-    return bytes(pdf.output())
+    # --- RITORNO COMPATIBILE ---
+    out = pdf.output(dest='S') if hasattr(pdf, 'output') and 'dest' in pdf.output.__code__.co_varnames else pdf.output()
+    if isinstance(out, str):
+        return out.encode('latin-1')
+    return bytes(out)
 
 # --- 5. RECUPERO DATI (CON GESTIONE ERRORI CONNESSIONE) ---
 db_online = True
